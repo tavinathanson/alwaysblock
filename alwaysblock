@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""
+alwaysblock CLI client
+Communicates with alwaysblockd daemon
+"""
+import argparse
+import json
+import socket
+import sys
+from pathlib import Path
+
+
+class AlwaysBlockClient:
+    """Client for alwaysblock daemon"""
+    
+    def __init__(self):
+        self.socket_path = Path.home() / '.alwaysblock' / 'control.sock'
+    
+    def send_command(self, command: str, args: dict = None) -> dict:
+        """Send command to daemon"""
+        if not self.socket_path.exists():
+            print("Error: alwaysblockd daemon is not running", file=sys.stderr)
+            print("Start it with: alwaysblockd", file=sys.stderr)
+            sys.exit(1)
+        
+        try:
+            # Connect to daemon
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.connect(str(self.socket_path))
+            
+            # Send command
+            cmd_data = {'command': command}
+            if args:
+                cmd_data['args'] = args
+            
+            sock.send(json.dumps(cmd_data).encode())
+            
+            # Receive response
+            response = sock.recv(8192)
+            sock.close()
+            
+            return json.loads(response.decode())
+            
+        except Exception as e:
+            print(f"Error communicating with daemon: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    def status(self):
+        """Show status"""
+        response = self.send_command('status')
+        
+        if 'error' in response:
+            print(f"Error: {response['error']}", file=sys.stderr)
+            sys.exit(1)
+        
+        print(f"Status: {response['status']}")
+        print(f"Configured domains: {response['configured_count']}")
+        print(f"Active sessions: {response['active_sessions']}")
+        print(f"Pending sessions: {response['pending_sessions']}")
+        
+        if response.get('sessions'):
+            print("\nSessions:")
+            for session in response['sessions']:
+                status = session['status'].upper()
+                if session['status'] == 'active':
+                    timing = f"{session['remaining_minutes']} min remaining"
+                else:
+                    timing = f"starts in {session['remaining_minutes']} min"
+                print(f"  [{session['id']}] {status} - {session['profile']} - {timing}")
+                print(f"      Domains: {', '.join(session['domains'][:3])}" + 
+                      (f" +{len(session['domains'])-3} more" if len(session['domains']) > 3 else ""))
+        
+        if response['unblocked_domains']:
+            print(f"\nCurrently unblocked: {', '.join(response['unblocked_domains'][:5])}" +
+                  (f" +{len(response['unblocked_domains'])-5} more" if len(response['unblocked_domains']) > 5 else ""))
+    
+    def unblock(self, profile, targets):
+        """Unblock domains with profile"""
+        response = self.send_command('unblock', {'profile': profile, 'targets': targets})
+        
+        if 'error' in response:
+            print(f"Error: {response['error']}", file=sys.stderr)
+            sys.exit(1)
+        
+        print(f"Created session {response['session_id']} with profile '{response['profile']}'")
+        if response['wait_minutes'] > 0:
+            print(f"Wait time: {response['wait_minutes']} minutes")
+        print(f"Duration: {response['duration_minutes']} minutes")
+        print(f"Domains: {', '.join(response['domains'])}")
+    
+    def cancel(self, session_id):
+        """Cancel a session"""
+        response = self.send_command('cancel', {'session_id': session_id})
+        
+        if 'error' in response:
+            print(f"Error: {response['error']}", file=sys.stderr)
+            sys.exit(1)
+        
+        print(response['message'])
+    
+    def replace(self, profile, targets):
+        """Replace active sessions with new one"""
+        # First block all
+        self.block_all(silent=True)
+        # Then unblock with new profile
+        self.unblock(profile, targets)
+    
+    def block_all(self, silent=False):
+        """Block all domains"""
+        response = self.send_command('block-all')
+        
+        if 'error' in response:
+            print(f"Error: {response['error']}", file=sys.stderr)
+            sys.exit(1)
+        
+        if not silent:
+            print(response['message'])
+
+
+def main():
+    """Main CLI entry point"""
+    parser = argparse.ArgumentParser(
+        description='alwaysblock domain blocker',
+        usage='alwaysblock [profile] command [args]\n       alwaysblock command [args]'
+    )
+    
+    # First check if first arg might be a profile
+    if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
+        # Could be profile or command
+        first_arg = sys.argv[1]
+        if first_arg in ['status', 'block-all', 'cancel']:
+            # It's a command
+            profile = None
+            command_args = sys.argv[1:]
+        elif len(sys.argv) > 2:
+            # Might be profile + command
+            profile = first_arg
+            command_args = sys.argv[2:]
+        else:
+            # Just profile, no command
+            profile = first_arg
+            command_args = []
+    else:
+        profile = None
+        command_args = sys.argv[1:]
+    
+    # Parse command
+    cmd_parser = argparse.ArgumentParser(add_help=False)
+    cmd_subparsers = cmd_parser.add_subparsers(dest='command')
+    
+    # Status command
+    cmd_subparsers.add_parser('status', help='Show current status')
+    
+    # Unblock command (implicit when using profile directly)
+    unblock_parser = cmd_subparsers.add_parser('unblock', help='Unblock domains')
+    unblock_parser.add_argument('targets', nargs='*', help='Domains/groups to unblock')
+    
+    # Cancel command
+    cancel_parser = cmd_subparsers.add_parser('cancel', help='Cancel a session')
+    cancel_parser.add_argument('session_id', type=int, help='Session ID to cancel')
+    
+    # Replace command
+    replace_parser = cmd_subparsers.add_parser('replace', help='Replace active sessions')
+    replace_parser.add_argument('targets', nargs='*', help='New domains/groups to unblock')
+    
+    # Block-all command
+    cmd_subparsers.add_parser('block-all', help='Block all domains')
+    
+    # Handle special case: profile without explicit command = unblock
+    if profile and not command_args:
+        # Profile only, default to unblock all
+        args = argparse.Namespace(command='unblock', targets=[])
+    elif profile and command_args and command_args[0] not in ['unblock', 'replace', 'cancel', 'block-all', 'status']:
+        # Profile + domains, implicit unblock
+        args = argparse.Namespace(command='unblock', targets=command_args)
+    else:
+        # Normal parsing
+        args = cmd_parser.parse_args(command_args)
+    
+    if not args.command:
+        parser.print_help()
+        sys.exit(0)
+    
+    # Create client
+    client = AlwaysBlockClient()
+    
+    # Execute command
+    if args.command == 'status':
+        client.status()
+    elif args.command == 'unblock':
+        targets = getattr(args, 'targets', [])
+        client.unblock(profile or 'unblock', targets)
+    elif args.command == 'cancel':
+        client.cancel(args.session_id)
+    elif args.command == 'replace':
+        targets = getattr(args, 'targets', [])
+        client.replace(profile or 'unblock', targets)
+    elif args.command == 'block-all':
+        client.block_all()
+
+
+if __name__ == '__main__':
+    main()

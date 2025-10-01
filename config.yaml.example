@@ -1,0 +1,152 @@
+# alwaysblock configuration example
+# This file demonstrates all available configuration options
+
+# Default profile to use when none is specified
+default_profile: unblock
+
+# Domain configuration
+domains:
+  # Individual domains with tags
+  netflix.com:
+    tags: [entertainment, streaming, ultra_distracting]
+  
+  youtube.com:
+    tags: [entertainment, video, ultra_distracting]
+  
+  twitter.com:
+    tags: [social, news, distracting]
+  
+  facebook.com:
+    tags: [social, distracting]
+    
+  reddit.com:
+    tags: [social, news, ultra_distracting]
+  
+  instagram.com:
+    tags: [social, ultra_distracting]
+  
+  # Domain groups - collections of related domains
+  google:
+    domains:
+      - google.com
+      - gmail.com
+      - mail.google.com
+      - calendar.google.com
+      - docs.google.com
+      - drive.google.com
+      - meet.google.com
+    tags: [work, productivity]
+  
+  news:
+    domains:
+      - nytimes.com
+      - wsj.com
+      - reuters.com
+      - bbc.com
+      - cnn.com
+      - theguardian.com
+      - bloomberg.com
+    tags: [news, reading]
+  
+  dev:
+    domains:
+      - github.com
+      - stackoverflow.com
+      - gitlab.com
+      - bitbucket.org
+      - npmjs.com
+      - pypi.org
+    tags: [development, work]
+  
+  slack:
+    domains:
+      - slack.com
+      - app.slack.com
+    tags: [work, communication]
+
+# Profile definitions
+profiles:
+  # Standard unblock with moderate wait time
+  unblock:
+    description: "Standard unblock with wait time"
+    wait:
+      base: 5              # Base wait time in minutes
+      concurrent_penalty: 5 # Additional minutes per concurrent session
+    duration: 30           # How long domains stay unblocked (minutes)
+    # Tag-based wait time overrides
+    tag_rules:
+      - tags: [ultra_distracting]
+        wait_override: 30  # 30 minute wait for ultra distracting sites
+      - tags: [social]
+        wait_override: 15  # 15 minute wait for social media
+  
+  # Quick unblock for brief tasks
+  quick:
+    description: "Quick 5 minute unblock"
+    wait: 2
+    duration: 5
+    cooldown: 30  # Can only use once per 30 minutes
+  
+  # Emergency bypass - use sparingly
+  bypass:
+    description: "Emergency bypass - once per hour"
+    wait: 0
+    duration: 5
+    cooldown: 60  # Can only use once per hour
+  
+  # Work mode - only unblock work-related sites
+  work:
+    description: "Work mode - productivity sites only"
+    tags: [work, productivity, development]  # Only unblock these tags
+    wait: 0
+    duration: 120  # 2 hours
+    cooldown: 30
+  
+  # Reading mode - news and articles
+  reading:
+    description: "Reading mode - news sites only"
+    tags: [news, reading]
+    wait: 5
+    duration: 30
+    tag_rules:
+      - tags: [social]  # Exclude social media even if tagged as news
+        exclude: true
+  
+  # Nuclear option - unblock everything
+  nuclear:
+    description: "Unblock everything - use with caution"
+    all: true  # Unblocks all configured domains
+    wait: 30   # Long wait time to discourage use
+    duration: 15
+    cooldown: 240  # 4 hour cooldown
+  
+  # Email only
+  email:
+    description: "Email access only"
+    only: [gmail, "mail.google.com"]  # Specific domains only
+    wait: 0
+    duration: 15
+  
+  # Custom profile examples
+  
+  # Morning routine
+  morning:
+    description: "Morning routine - news and email"
+    tags: [news, work]
+    wait: 0
+    duration: 30
+    # Only available 6am-9am
+    time_restriction:
+      start: "06:00"
+      end: "09:00"
+  
+  # Focus mode with progressive delays
+  focus:
+    description: "Focus mode with increasing delays"
+    wait:
+      base: 10
+      concurrent_penalty: 10
+      # Each use today adds more wait time
+      daily_penalty: 5
+    duration: 20
+    max_daily_uses: 3  # Limit uses per day
