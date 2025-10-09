@@ -84,27 +84,50 @@ class ConfigManager:
         return list(set(domains))
     
     def is_domain_blocked(self, domain: str) -> bool:
-        """Check if a domain is currently blocked based on active sessions"""
+        """Check if a domain is currently blocked based on configuration and active sessions"""
         if not self.db:
-            return True  # Block by default if no DB
+            return False  # Allow by default if no DB
             
         # Remove port if present
         domain = domain.split(':')[0]
         
-        # Get all domains from active sessions
-        active_domains = set(self.db.get_all_domains_from_sessions())
+        # Get all configured domains
+        configured_domains = set(self.get_all_configured_domains())
+        
+        # Check if domain is in configuration
+        domain_in_config = False
         
         # Check exact match
+        if domain in configured_domains:
+            domain_in_config = True
+        else:
+            # Check parent domains (e.g., mail.google.com -> google.com)
+            parts = domain.split('.')
+            for i in range(len(parts) - 1):
+                parent = '.'.join(parts[i:])
+                if parent in configured_domains:
+                    domain_in_config = True
+                    break
+        
+        # If not in config, don't block it
+        if not domain_in_config:
+            return False
+            
+        # Domain is in config - now check if it's in active unblock sessions
+        active_domains = set(self.db.get_all_domains_from_sessions())
+        
+        # Check exact match in active sessions
         if domain in active_domains:
             return False
             
-        # Check parent domains (e.g., mail.google.com -> google.com)
+        # Check parent domains in active sessions
         parts = domain.split('.')
         for i in range(len(parts) - 1):
             parent = '.'.join(parts[i:])
             if parent in active_domains:
                 return False
                 
+        # Domain is configured but not in active sessions - block it
         return True
     
     def calculate_timing(self, profile_name: str, targets: List[str]) -> Dict[str, Any]:

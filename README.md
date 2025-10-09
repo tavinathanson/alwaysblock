@@ -17,7 +17,7 @@ Traditional domain blocking approaches have significant drawbacks:
 
 ## Features
 
-- 🚫 **DNS-based blocking**: All domains blocked by default (resolve to 0.0.0.0)
+- 🚫 **DNS-based blocking**: Configured domains are blocked (resolve to 0.0.0.0)
 - ⏱️ **Profile-based timing**: Configurable wait times, durations, and cooldowns
 - 🏷️ **Tag system**: Group domains by category with tag-specific rules
 - 🔄 **Session management**: Track active unblock sessions with automatic expiration
@@ -102,6 +102,20 @@ profiles:
 ```
 
 See `config.yaml.example` for all features (tag rules, profile scopes, etc).
+
+## How It Works
+
+alwaysblock acts as a DNS proxy that:
+1. **Only blocks domains listed in your config** - all other domains resolve normally
+2. **Blocked domains return 0.0.0.0** - preventing connections
+3. **Unblock sessions temporarily allow access** - with configurable timing
+4. **Non-configured domains pass through** - normal internet access for everything else
+
+### Subdomain Handling
+
+- **Root domains block all subdomains**: Adding `example.com` automatically blocks `www.example.com`, `api.example.com`, etc.
+- **Specific subdomains**: You can block just `api.example.com` without blocking the entire `example.com` domain
+- **Multiple root domains**: Some services use multiple domains (e.g., Instagram uses both `instagram.com` and `cdninstagram.com`) - you'll need to add each root domain to block completely
 
 ## Daily Usage
 
