@@ -77,10 +77,12 @@ class PFManager:
                     if result.returncode == 0:
                         logger.debug(f"Flushed PF states for {ip}")
                     else:
-                        # Don't log errors for every IP - it's noisy
-                        if result.returncode == 1 and 'sudo: a password is required' in result.stderr:
-                            logger.debug("PF state flushing requires sudo privileges")
-                            return  # Skip remaining IPs
+                        if 'sudo: a password is required' in result.stderr:
+                            logger.error("ERROR: PF state flushing failed - alwaysblockd must be run with sudo")
+                            logger.error("Run: sudo alwaysblockd")
+                            raise RuntimeError("PF state flushing requires sudo")
+                        else:
+                            logger.error(f"Failed to flush PF states: {result.stderr}")
                             
             except Exception as e:
                 logger.debug(f"Failed to flush PF states for {ip}: {e}")
@@ -102,7 +104,11 @@ class PFManager:
             if result.returncode == 0:
                 logger.info("Flushed all PF states")
             elif 'sudo: a password is required' in result.stderr:
-                logger.debug("PF state flushing requires sudo privileges")
+                logger.error("ERROR: PF state flushing failed - alwaysblockd must be run with sudo")
+                logger.error("Run: sudo alwaysblockd")
+                raise RuntimeError("PF state flushing requires sudo")
+            else:
+                logger.error(f"Failed to flush all PF states: {result.stderr}")
                 
         except Exception as e:
             logger.debug(f"Failed to flush all PF states: {e}")

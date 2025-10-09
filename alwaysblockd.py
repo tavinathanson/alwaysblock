@@ -47,6 +47,17 @@ class AlwaysBlockDaemon:
     async def start(self):
         """Start all daemon components"""
         logger.info(f"Starting alwaysblock daemon on DNS port {self.dns_port}")
+        
+        # Verify we can do PF operations
+        try:
+            logger.info("Testing PF access...")
+            self.pf_manager.flush_all_states()
+        except RuntimeError as e:
+            if "requires sudo" in str(e):
+                print("\nERROR: alwaysblock requires sudo for full functionality")
+                print("Run: sudo alwaysblockd\n")
+                sys.exit(1)
+        
         self.running = True
         
         # Load initial configuration
@@ -128,8 +139,8 @@ def main():
     parser.add_argument(
         '--port', '-p',
         type=int,
-        default=5353,
-        help='DNS proxy port (default: 5353)'
+        default=53,
+        help='DNS proxy port (default: 53)'
     )
     parser.add_argument(
         '--verbose', '-v',
@@ -138,6 +149,14 @@ def main():
     )
     
     args = parser.parse_args()
+    
+    # Check if we need sudo for port 53
+    if args.port < 1024:
+        import os
+        if os.geteuid() != 0:
+            print(f"Error: Port {args.port} requires sudo access")
+            print(f"Run: sudo alwaysblockd")
+            sys.exit(1)
     
     setup_logging(args.verbose)
     

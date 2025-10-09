@@ -28,253 +28,120 @@ Traditional domain blocking approaches have significant drawbacks:
 
 ## Installation
 
-### Prerequisites
-
-- macOS (required for PF integration)
-- Python 3.8+
-- pip
-
-### Install
-
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/alwaysblock.git
 cd alwaysblock
-
-# Install dependencies
-pip3 install -r requirements.txt
-
-# Create config directory
-mkdir -p ~/.config/alwaysblock
-
-# Copy and edit configuration
-cp config.yaml.example ~/.config/alwaysblock/config.yaml
+sudo ./install.sh
 ```
 
-## Quick Start
+This will:
+- Check Python 3.8+ is installed
+- Create a virtual environment at `~/.alwaysblock-venv` (owned by your user)
+- Install dependencies (dnslib, pyyaml)
+- Create config at `~/.config/alwaysblock/config.yaml` (owned by your user)
+- Install commands to `/usr/local/bin`:
+  - `alwaysblock` - CLI for managing blocks
+  - `alwaysblockd` - The daemon (usually run as service)
+  - `alwaysblock-dns` - DNS configuration helper
+  - `alwaysblock-service` - Service management
 
-1. **Start the daemon:**
+## Setup
+
+After installation:
+
+1. **Install as service** (recommended):
    ```bash
-   # Run with default DNS port (requires sudo)
-   sudo python3 alwaysblockd.py
-   
-   # Or use custom port (no sudo required, but needs DNS configuration)
-   python3 alwaysblockd.py --port 5353
+   sudo alwaysblock-service install
+   ```
+   This runs alwaysblock as a macOS service that starts automatically.
+
+2. **Configure DNS**:
+   ```bash
+   alwaysblock-dns enable
    ```
 
-2. **Configure your Mac to use alwaysblock:**
-   - System Preferences → Network → Advanced → DNS
-   - Add `127.0.0.1` (if using port 53)
-   - Or configure your DNS to forward to `127.0.0.1:5353`
-
-3. **Use the CLI:**
+3. **Edit config** to add domains:
    ```bash
-   # Check status
-   ./alwaysblock status
-   
-   # Unblock with default profile
-   ./alwaysblock unblock netflix
-   
-   # Unblock with specific profile
-   ./alwaysblock bypass unblock google
-   
-   # Block everything immediately
-   ./alwaysblock block-all
+   nano ~/.config/alwaysblock/config.yaml
    ```
+
+Verify with `alwaysblock status`
 
 ## Configuration
 
-### Basic Structure
+`~/.config/alwaysblock/config.yaml` controls what domains are blocked and how unblocking works.
+
+### Basic Example
 
 ```yaml
-# Default profile when none specified
-default_profile: unblock
+default_profile: standard
 
-# Domain definitions
 domains:
-  # Individual domain with tags
   netflix.com:
-    tags: [entertainment, streaming]
+    tags: [entertainment]
+  reddit.com:
+    tags: [social]
   
   # Domain group
   google:
     domains:
       - google.com
       - gmail.com
-      - calendar.google.com
-      - docs.google.com
-    tags: [work, productivity]
+    tags: [work]
 
-# Profile definitions
 profiles:
-  # Standard unblock with wait time
-  unblock:
-    description: "Standard unblock"
+  standard:
     wait:
-      base: 5              # Base wait time in minutes
-      concurrent_penalty: 5 # Extra minutes per concurrent session
-    duration: 30           # How long domains stay unblocked
-    
-  # Emergency bypass
-  bypass:
-    description: "Emergency bypass - once per hour"
+      base: 5      # Wait 5 minutes before unblocking
+    duration: 30   # Stay unblocked for 30 minutes
+  
+  quick:
     wait: 0
     duration: 5
-    cooldown: 60  # Can only use once per hour
+    cooldown: 30   # Can only use once per 30 minutes
 ```
 
-### Advanced Features
+See `config.yaml.example` for all features (tag rules, profile scopes, etc).
 
-#### Tag-based Rules
-
-Override wait times for specific tags:
-
-```yaml
-profiles:
-  unblock:
-    wait:
-      base: 5
-    duration: 30
-    tag_rules:
-      - tags: [social, ultra_distracting]
-        wait_override: 30  # 30 minute wait for social media
-```
-
-#### Profile Scopes
-
-Profiles can target specific sets of domains:
-
-```yaml
-profiles:
-  # Unblock everything
-  unblock-all:
-    all: true
-    wait: 10
-    duration: 60
-    
-  # Unblock only domains with specific tags
-  work-only:
-    tags: [work, productivity]
-    wait: 0
-    duration: 120
-    
-  # Unblock only specific domains
-  email-only:
-    only: [gmail, "mail.google.com"]
-    wait: 0
-    duration: 30
-```
-
-## CLI Usage
-
-### Profile-based Commands
-
-The CLI follows the pattern: `alwaysblock [profile] command [args]`
+## Daily Usage
 
 ```bash
-# Use default profile
-./alwaysblock unblock netflix youtube
-
-# Use specific profile
-./alwaysblock bypass unblock reddit
-
-# Quick access profile (if configured)
-./alwaysblock quick
+alwaysblock status                    # What's blocked?
+alwaysblock unblock netflix           # Unblock for 30 min (with 5 min wait)
+alwaysblock quick unblock reddit      # Quick 5 min unblock
+alwaysblock block-all                 # Block everything NOW
 ```
 
-### Status and Management
+**Network Switching**: When you switch networks (WiFi↔Ethernet), DNS settings don't carry over. Run `alwaysblock-dns enable` to reactivate blocking on the new interface.
 
+## Management
+
+### Service Commands
 ```bash
-# Show current status
-./alwaysblock status
-
-# Cancel active session
-./alwaysblock cancel [session_id]
-
-# Replace current session
-./alwaysblock replace [profile] [domains...]
-
-# Block all immediately
-./alwaysblock block-all
+sudo alwaysblock-service install   # Install as service
+sudo alwaysblock-service status    # Check status
+sudo alwaysblock-service restart   # Restart
+sudo alwaysblock-service logs      # View logs
+sudo alwaysblock-service uninstall # Remove service
 ```
 
-## Architecture
-
-- **`alwaysblockd.py`**: Main daemon with asyncio event loop
-- **`dns_proxy.py`**: DNS interception using dnslib
-- **`config_manager.py`**: YAML configuration and profile management
-- **`db.py`**: SQLite session and cooldown tracking
-- **`pf_manager.py`**: macOS PF state management
-- **`cli_interface.py`**: Unix socket control interface
-- **`alwaysblock`**: CLI client
-
-## Running as a Service
-
-### macOS (launchd)
-
-Create `/Library/LaunchDaemons/com.alwaysblock.daemon.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" 
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.alwaysblock.daemon</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/python3</string>
-        <string>/path/to/alwaysblockd.py</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/var/log/alwaysblock.log</string>
-    <key>StandardErrorPath</key>
-    <string>/var/log/alwaysblock.error.log</string>
-</dict>
-</plist>
-```
-
-Load with: `sudo launchctl load /Library/LaunchDaemons/com.alwaysblock.daemon.plist`
-
-## Development
-
-### Running Tests
-
+### Updates
 ```bash
-# Basic functionality test
-python3 test_alwaysblock.py
-
-# DNS resolution test
-dig @127.0.0.1 -p 5353 google.com
+cd alwaysblock && git pull && sudo ./install.sh
 ```
+The installer automatically handles service restarts.
 
-### Debug Mode
+### Config Changes
+Edit `~/.config/alwaysblock/config.yaml` - changes apply on next unblock.
 
-```bash
-# Run with verbose logging
-python3 alwaysblockd.py --verbose
-```
 
 ## Troubleshooting
 
-### DNS not working?
-- Check if the daemon is running: `./alwaysblock status`
-- Verify DNS configuration: `scutil --dns | grep nameserver`
-- Test resolution: `dig @127.0.0.1 google.com`
-
-### Sessions not activating?
-- Check database: `sqlite3 ~/.alwaysblock/alwaysblock.db "SELECT * FROM sessions;"`
-- Check logs for errors
-- Verify system time is correct
-
-### PF states not flushing?
-- Run with sudo for PF access
-- Check PF is enabled: `sudo pfctl -s info`
+- **DNS not working?** Run `alwaysblock-dns status` to see which interfaces are configured
+- **Switched networks?** Run `alwaysblock-dns enable` to set DNS on new interface
+- **Service issues?** Check logs: `sudo alwaysblock-service logs`
+- **Port already in use?** Stop any manual daemon: `sudo killall -9 alwaysblockd`
+- **Want to disable?** Run `alwaysblock-dns disable` to restore original DNS
 
 ## License
 

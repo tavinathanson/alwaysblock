@@ -5,7 +5,7 @@ Intercepts DNS requests and blocks configured domains
 import asyncio
 import logging
 import socket
-from typing import Dict, Set, Optional, Tuple
+from typing import Dict, Set, Optional, Tuple, List
 from threading import RLock
 import time
 
