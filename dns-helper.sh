@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # DNS helper for alwaysblock
-set -e
 
 # Colors
 if [ -t 1 ]; then
@@ -44,8 +43,11 @@ case "${1:-}" in
     enable)
         check_root "enable"
         echo "Setting DNS to 127.0.0.1 for all active networks..."
+        
+        # Process each network service
         while IFS= read -r service; do
             if [[ ! "$service" =~ ^\* ]] && [ -n "$service" ]; then
+                # Check if service has an IP address
                 if networksetup -getinfo "$service" 2>/dev/null | grep -q "IP address"; then
                     # Backup current DNS
                     CURRENT=$(networksetup -getdnsservers "$service" 2>/dev/null | grep -v "There aren't any")
@@ -53,11 +55,12 @@ case "${1:-}" in
                         echo "$CURRENT" > "$CONFIG_DIR/.dns_backup_$(echo "$service" | tr ' ' '_')"
                     fi
                     
-                    networksetup -setdnsservers "$service" 127.0.0.1
+                    # Set DNS
+                    networksetup -setdnsservers "$service" 127.0.0.1 2>/dev/null
                     echo "✓ Set DNS for $service"
                 fi
             fi
-        done < <(networksetup -listallnetworkservices | tail -n +2)
+        done < <(networksetup -listallnetworkservices 2>/dev/null | tail -n +2)
         ;;
         
     disable)
