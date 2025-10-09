@@ -1,180 +1,254 @@
-# alwaysblock
+# AlwaysBlock
 
-A clean, modern DNS-based domain blocker for macOS. Built as a complete rewrite of [taviblock](https://github.com/tavinathanson/taviblock), focusing on simplicity, performance, and reliability.
-
-## Why alwaysblock?
-
-Traditional domain blocking approaches have significant drawbacks:
-- **`/etc/hosts` editing**: Slow DNS propagation, requires root, causes system monitoring overhead
-- **Browser extensions**: Browser-specific, easily bypassed, don't affect native apps
-- **Firewall-only blocking**: Can't handle CDNs/rotating IPs, long-lived connections survive
-
-**alwaysblock** solves these problems with a DNS proxy approach:
-- Instant blocking/unblocking (no DNS cache issues)
-- Works system-wide for all applications
-- Handles CDNs and rotating IPs naturally
-- Integrates with PF to kill existing connections
+A macOS website blocker that uses Network Extensions for robust, unbypassable blocking. Unlike traditional DNS-based blockers, AlwaysBlock intercepts network connections at the system level.
 
 ## Features
 
-- 🚫 **DNS-based blocking**: Configured domains are blocked (resolve to 0.0.0.0)
-- ⏱️ **Profile-based timing**: Configurable wait times, durations, and cooldowns
-- 🏷️ **Tag system**: Group domains by category with tag-specific rules
-- 🔄 **Session management**: Track active unblock sessions with automatic expiration
-- 🌐 **Domain groups**: Define collections of related domains
-- 🔧 **macOS PF integration**: Kills existing connections when domains are re-blocked
-- 📊 **Concurrent penalties**: Discourage multiple simultaneous unblocks
-- 🎯 **YAML configuration**: Human-readable config compatible with taviblock
+- 🚫 **Unbypassable blocking** - Works at the network packet level, not just DNS
+- ⏱️ **Smart unblocking** - Configurable wait times and durations to encourage mindful browsing
+- 🏷️ **Tag system** - Group domains by category with tag-specific rules
+- 🔄 **Session management** - Track active unblock sessions with automatic expiration
+- 🌐 **Domain groups** - Automatically blocks CDNs and related domains
+- 🎯 **Profile-based rules** - Different unblocking strategies for different contexts
+- 📊 **No daemon required** - Network Extension handles all blocking
+- 🔧 **YAML configuration** - Human-readable config compatible with taviblock
+
+## Architecture
+
+AlwaysBlock consists of three components:
+
+1. **Network Extension** (`AlwaysBlockApp.app`) - System-level content filter that blocks network connections
+2. **CLI** (`alwaysblock`) - Command-line tool for managing blocked domains
+3. **Configuration** - YAML-based config with domain groups and unblocking profiles
+
+No background daemon is needed - the Network Extension runs continuously and the CLI directly updates the blocking rules.
+
+## Prerequisites
+
+- macOS 13+ (Ventura or later)
+- Xcode (for building the Network Extension)
+- Python 3.8+
+- Temporarily disabled System Integrity Protection (SIP) for development
 
 ## Installation
 
+### Step 1: Disable SIP (Temporary, for Development)
+
+1. Restart your Mac and hold the power button (Apple Silicon) or Command+R (Intel)
+2. Open Terminal from the Utilities menu
+3. Run: `csrutil disable`
+4. Restart your Mac
+
+**Important**: Re-enable SIP after development by running `csrutil enable` in Recovery Mode.
+
+### Step 2: Enable Developer Mode
+
 ```bash
-git clone https://github.com/yourusername/alwaysblock.git
-cd alwaysblock
-sudo ./install.sh
+sudo systemextensionsctl developer on
+```
+
+### Step 3: Build the Network Extension
+
+1. Open `AlwaysBlockApp/AlwaysBlock.xcodeproj` in Xcode
+2. Select the **AlwaysBlock** target
+3. Under "Signing & Capabilities":
+   - Choose "Sign to Run Locally" or select your team
+   - Ensure "Automatically manage signing" is checked
+4. Select the **AlwaysBlockExtension** target and repeat step 3
+5. Build and run (Cmd+R)
+
+### Step 4: Approve the System Extension
+
+When you first run the app:
+1. You'll see a prompt to allow the system extension
+2. Click "Open System Settings" or go to System Settings → Privacy & Security
+3. Look for "System software from developer..." message
+4. Click "Allow" and enter your password
+
+### Step 5: Install the CLI
+
+```bash
+sudo ./install-direct.sh
 ```
 
 This will:
-- Check Python 3.8+ is installed
-- Create a virtual environment at `~/.alwaysblock-venv` (owned by your user)
-- Install dependencies (dnslib, pyyaml)
-- Create config at `~/.config/alwaysblock/config.yaml` (owned by your user)
-- Install commands to `/usr/local/bin`:
-  - `alwaysblock` - CLI for managing blocks
-  - `alwaysblockd` - The daemon (usually run as service)
-  - `alwaysblock-dns` - DNS configuration helper
-  - `alwaysblock-service` - Service management
-
-## Setup
-
-After installation:
-
-1. **Install as service** (recommended):
-   ```bash
-   sudo alwaysblock-service install
-   ```
-   This runs alwaysblock as a macOS service that starts automatically.
-
-2. **Configure DNS**:
-   ```bash
-   alwaysblock-dns enable
-   ```
-
-3. **Edit config** to add domains:
-   ```bash
-   nano ~/.config/alwaysblock/config.yaml
-   ```
-
-Verify with `alwaysblock status`
+- Create a Python virtual environment at `~/.alwaysblock-venv`
+- Install dependencies (PyYAML)
+- Install the `alwaysblock` command to `/usr/local/bin/`
+- Set up configuration directories
 
 ## Configuration
 
-`~/.config/alwaysblock/config.yaml` controls what domains are blocked and how unblocking works.
-
-### Basic Example
+Edit `~/.config/alwaysblock/config.yaml` to configure domains and profiles:
 
 ```yaml
-default_profile: standard
-
 domains:
-  netflix.com:
-    tags: [entertainment]
+  # Individual domains
   reddit.com:
     tags: [social]
   
-  # Domain group
-  google:
+  # Domain groups (with CDNs)
+  youtube:
     domains:
-      - google.com
-      - gmail.com
-    tags: [work]
+      - youtube.com
+      - googlevideo.com
+      - ytimg.com
+    tags: [entertainment, streaming]
 
 profiles:
-  standard:
+  # Default profile with wait times
+  unblock:
     wait:
-      base: 5      # Wait 5 minutes before unblocking
-    duration: 30   # Stay unblocked for 30 minutes
-  
-  quick:
+      base: 5              # 5 minute wait
+    duration: 30           # Stay unblocked for 30 minutes
+    
+  # Quick access for work sites
+  work:
+    tags: [work, productivity]
     wait: 0
-    duration: 5
-    cooldown: 30   # Can only use once per 30 minutes
+    duration: 120          # 2 hours
 ```
 
-See `config.yaml.example` for all features (tag rules, profile scopes, etc).
+## Usage
+
+### Basic Commands
+
+```bash
+# Show status
+alwaysblock status
+
+# Temporarily unblock a domain (uses default profile)
+alwaysblock unblock reddit
+
+# Unblock with a specific profile
+alwaysblock unblock youtube -p quick
+
+# Block all domains immediately
+alwaysblock block-all
+
+# Cancel an unblock session
+alwaysblock cancel <session_id>
+```
+
+### Unblocking Behavior
+
+When you unblock a domain:
+1. A timer starts based on the profile's wait time
+2. After the wait, the domain becomes accessible
+3. It stays unblocked for the profile's duration
+4. The domain is automatically re-blocked when time expires
+
+### Domain Groups
+
+When you block/unblock a main domain, related CDNs are included:
+
+- `reddit.com` → also affects `redd.it`, `redditstatic.com`
+- `youtube.com` → also affects `googlevideo.com`, `ytimg.com`
+- `twitter.com` → also affects `t.co`, `twimg.com`, `x.com`
 
 ## How It Works
 
-alwaysblock acts as a DNS proxy that:
-1. **Only blocks domains listed in your config** - all other domains resolve normally
-2. **Blocked domains return 0.0.0.0** - preventing connections
-3. **Unblock sessions temporarily allow access** - with configurable timing
-4. **Non-configured domains pass through** - normal internet access for everything else
+1. **Configuration** is stored in YAML and SQLite database
+2. **CLI** manages the configuration and writes blocked domains to a JSON file
+3. **Network Extension** monitors the JSON file and blocks matching connections
+4. **No DNS changes** - works at the network level, can't be bypassed
 
-### Subdomain Handling
-
-- **Root domains block all subdomains**: Adding `example.com` automatically blocks `www.example.com`, `api.example.com`, etc.
-- **Specific subdomains**: You can block just `api.example.com` without blocking the entire `example.com` domain
-- **Multiple root domains**: Some services use multiple domains (e.g., Instagram uses both `instagram.com` and `cdninstagram.com`) - you'll need to add each root domain to block completely
-
-## Daily Usage
-
-```bash
-alwaysblock status                    # What's blocked?
-alwaysblock unblock netflix           # Unblock for 30 min (with 5 min wait)
-alwaysblock quick unblock reddit      # Quick 5 min unblock
-alwaysblock block-all                 # Block everything NOW
+The Network Extension reads from:
 ```
-
-**Network Switching**: When you switch networks (WiFi↔Ethernet), DNS settings don't carry over. Run `alwaysblock-dns enable` to reactivate blocking on the new interface.
-
-## Management
-
-### Service Commands
-```bash
-sudo alwaysblock-service install   # Install as service
-sudo alwaysblock-service status    # Check status
-sudo alwaysblock-service restart   # Restart
-sudo alwaysblock-service logs      # View logs
-sudo alwaysblock-service uninstall # Remove service
+~/Library/Containers/com.tavinathanson.AlwaysBlockApp/Data/Documents/alwaysblock_domains.json
 ```
-
-### Updates
-```bash
-cd alwaysblock && git pull && sudo ./install.sh
-```
-The installer automatically handles service restarts.
-
-### Config Changes
-Edit `~/.config/alwaysblock/config.yaml` - changes apply on next unblock.
-
-### Uninstall
-```bash
-cd alwaysblock && sudo ./uninstall.sh
-```
-This removes everything except your config file.
-
 
 ## Troubleshooting
 
-- **DNS not working?** Run `alwaysblock-dns status` to see which interfaces are configured
-- **Switched networks?** Run `alwaysblock-dns enable` to set DNS on new interface
-- **Service issues?** Check logs: `sudo alwaysblock-service logs`
-- **Port already in use?** Stop any manual daemon: `sudo killall -9 alwaysblockd`
-- **Want to disable?** Run `alwaysblock-dns disable` to restore original DNS
+### Extension not blocking?
+
+1. Check if it's running:
+   ```bash
+   systemextensionsctl list
+   ```
+   Should show "com.tavinathanson.AlwaysBlockApp.AlwaysBlockExtension" as "activated enabled"
+
+2. Check the JSON file:
+   ```bash
+   cat ~/Library/Containers/com.tavinathanson.AlwaysBlockApp/Data/Documents/alwaysblock_domains.json
+   ```
+
+3. Force refresh:
+   ```bash
+   alwaysblock status
+   ```
+
+### Build errors in Xcode?
+
+- Ensure both targets have the same signing settings
+- Check that entitlements files exist in both target folders
+- Clean build folder (Shift+Cmd+K) and rebuild
+
+### Can't disable SIP?
+
+- Make sure you're in Recovery Mode
+- On newer Macs, you may need to authenticate multiple times
+- Alternative: Use a Developer ID certificate (requires paid Apple Developer account)
+
+## Development
+
+### Project Structure
+
+```
+alwaysblock/
+├── AlwaysBlockApp/                 # Xcode project
+│   ├── AlwaysBlockApp/            # Container app
+│   └── AlwaysBlockExtension/      # Network Extension
+├── alwaysblock_direct.py          # CLI implementation  
+├── config_manager.py              # Configuration handling
+├── db.py                          # SQLite database
+└── config.yaml.example            # Example configuration
+```
+
+### Making Changes
+
+1. **CLI changes**: Edit `alwaysblock_direct.py` and test immediately
+2. **Blocking logic**: Edit `FilterDataProvider.swift` and rebuild in Xcode
+3. **Configuration**: Update `config.yaml.example` with new options
+
+### Re-enabling SIP
+
+When done with development:
+1. Boot into Recovery Mode
+2. Run: `csrutil enable`
+3. Restart
+
+For production deployment, you'll need:
+- Apple Developer account
+- Proper code signing with Developer ID
+- Notarization for distribution
+
+## Uninstalling
+
+1. Remove the system extension:
+   ```bash
+   systemextensionsctl uninstall - com.tavinathanson.AlwaysBlockApp.AlwaysBlockExtension
+   ```
+
+2. Remove the app:
+   ```bash
+   rm -rf /Applications/AlwaysBlock.app
+   ```
+
+3. Remove CLI and config:
+   ```bash
+   sudo rm /usr/local/bin/alwaysblock
+   rm -rf ~/.config/alwaysblock
+   rm -rf ~/.local/share/alwaysblock
+   rm -rf ~/.alwaysblock-venv
+   ```
+
+4. Re-enable SIP if you disabled it
 
 ## License
 
-MIT License - see LICENSE file
-
-## Contributing
-
-Pull requests welcome! Please:
-- Keep the codebase minimal and clean
-- Add tests for new features
-- Update documentation
-- Follow existing code style
+MIT License - See LICENSE file for details
 
 ## Credits
 
-Built as a clean rewrite of [taviblock](https://github.com/tavinathanson/taviblock) by Tavi Nathanson.
+Built as a complete rewrite of [taviblock](https://github.com/tavinathanson/taviblock) using modern macOS Network Extensions instead of DNS manipulation.

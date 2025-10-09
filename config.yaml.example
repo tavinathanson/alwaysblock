@@ -66,17 +66,65 @@ domains:
     domains:
       - google.com
       - gmail.com
+      - mail.google.com
       - calendar.google.com
       - docs.google.com
       - drive.google.com
       - meet.google.com
+      - googleusercontent.com
+      - gstatic.com
+      - googleapis.com
     tags: [work, productivity]
   
   slack:
     domains:
       - slack.com
       - app.slack.com
+      - slack-edge.com
+      - slack-imgs.com
     tags: [work, communication]
+  
+  reddit:
+    domains:
+      - reddit.com
+      - redd.it
+      - redditstatic.com
+      - redditmedia.com
+    tags: [social]
+  
+  youtube:
+    domains:
+      - youtube.com
+      - googlevideo.com
+      - ytimg.com
+      - ggpht.com
+      - youtube-nocookie.com
+    tags: [entertainment, streaming]
+  
+  twitter:
+    domains:
+      - twitter.com
+      - x.com
+      - t.co
+      - twimg.com
+    tags: [social, news]
+  
+  facebook:
+    domains:
+      - facebook.com
+      - fbcdn.net
+      - facebook.net
+      - fbsbx.com
+      - fb.com
+      - messenger.com
+    tags: [social]
+  
+  instagram:
+    domains:
+      - instagram.com
+      - cdninstagram.com
+      - fbcdn.net
+    tags: [social]
   
 # Profiles (different unblocking strategies)
 profiles:

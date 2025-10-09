@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""
+alwaysblock CLI client for Network Extension
+Communicates with the Network Extension via Unix socket
+"""
+import argparse
+import json
+import socket
+import sys
+import subprocess
+from pathlib import Path
+
+
+class AlwaysBlockNEClient:
+    """Client for alwaysblock Network Extension"""
+    
+    def __init__(self):
+        # Network Extension IPC socket
+        self.socket_path = Path('/tmp/alwaysblock-ne.sock')
+    
+    def ensure_extension_active(self):
+        """Ensure the Network Extension is activated"""
+        # Check if app is running
+        result = subprocess.run(['pgrep', '-f', 'AlwaysBlock.app'], capture_output=True)
+        if result.returncode != 0:
+            print("Starting AlwaysBlock Network Extension...")
+            # Launch the app to activate extension
+            subprocess.run(['open', '/Applications/AlwaysBlock.app'], check=True)
+            # Wait a moment for it to start
+            import time
+            time.sleep(2)
+    
+    def send_command(self, command: str, args: dict = None) -> dict:
+        """Send command to Network Extension"""
+        self.ensure_extension_active()
+        
+        if not self.socket_path.exists():
+            print("Error: Network Extension is not running", file=sys.stderr)
+            print("Please ensure AlwaysBlock.app is installed and the extension is approved", file=sys.stderr)
+            sys.exit(1)
+        
+        try:
+            # Connect to Network Extension
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.connect(str(self.socket_path))
+            
+            # Send command
+            cmd_data = {'command': command}
+            if args:
+                cmd_data['args'] = args
+            
+            sock.send(json.dumps(cmd_data).encode())
+            
+            # Receive response
+            response = sock.recv(8192)
+            sock.close()
+            
+            return json.loads(response.decode())
+            
+        except Exception as e:
+            print(f"Error communicating with Network Extension: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    def status(self):
+        """Show status"""
+        result = self.send_command('list')
+        
+        if result['status'] == 'success':
+            domains = result.get('domains', [])
+            if domains:
+                print("Blocked domains:")
+                for domain in sorted(domains):
+                    print(f"  {domain}")
+            else:
+                print("No domains are currently blocked")
+        else:
+            print(f"Error: {result.get('message', 'Unknown error')}")
+    
+    def block(self, domain: str, duration: int = 0):
+        """Block a domain"""
+        result = self.send_command('block', {'domain': domain, 'duration': duration})
+        
+        if result['status'] == 'success':
+            if duration > 0:
+                print(f"Blocked {domain} for {duration} minutes")
+            else:
+                print(f"Blocked {domain} permanently")
+        else:
+            print(f"Error: {result.get('message', 'Unknown error')}")
+    
+    def unblock(self, domain: str):
+        """Unblock a domain"""
+        result = self.send_command('unblock', {'domain': domain})
+        
+        if result['status'] == 'success':
+            print(f"Unblocked {domain}")
+        else:
+            print(f"Error: {result.get('message', 'Unknown error')}")
+    
+    def unblock_all(self):
+        """Unblock all domains"""
+        result = self.send_command('list')
+        
+        if result['status'] == 'success':
+            domains = result.get('domains', [])
+            if not domains:
+                print("No domains to unblock")
+                return
+            
+            for domain in domains:
+                self.unblock(domain)
+        else:
+            print(f"Error: {result.get('message', 'Unknown error')}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description='alwaysblock - Network Extension based website blocker')
+    
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    
+    # Status command
+    subparsers.add_parser('status', help='Show blocked domains')
+    
+    # Block command
+    block_parser = subparsers.add_parser('block', help='Block a domain')
+    block_parser.add_argument('domain', help='Domain to block (e.g., reddit.com)')
+    block_parser.add_argument('-d', '--duration', type=int, default=0,
+                            help='Duration in minutes (0 for permanent)')
+    
+    # Unblock command
+    unblock_parser = subparsers.add_parser('unblock', help='Unblock a domain')
+    unblock_parser.add_argument('domain', help='Domain to unblock')
+    
+    # Unblock all command
+    subparsers.add_parser('unblock-all', help='Unblock all domains')
+    
+    args = parser.parse_args()
+    
+    # Default to status if no command
+    if not args.command:
+        args.command = 'status'
+    
+    client = AlwaysBlockNEClient()
+    
+    if args.command == 'status':
+        client.status()
+    elif args.command == 'block':
+        client.block(args.domain, args.duration)
+    elif args.command == 'unblock':
+        client.unblock(args.domain)
+    elif args.command == 'unblock-all':
+        client.unblock_all()
+
+
+if __name__ == '__main__':
+    main()
