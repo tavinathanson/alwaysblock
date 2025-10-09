@@ -18,18 +18,31 @@ fi
 
 print_usage() {
     echo "Usage: $0 [enable|disable|status|check]"
-    echo "  enable  - Set DNS to 127.0.0.1 for all active networks"
-    echo "  disable - Restore original DNS settings"
+    echo "  enable  - Set DNS to 127.0.0.1 for all active networks (requires sudo)"
+    echo "  disable - Restore original DNS settings (requires sudo)"
     echo "  status  - Show current DNS settings"
     echo "  check   - Check if alwaysblock DNS is active"
     exit 1
 }
 
-CONFIG_DIR="$HOME/.config/alwaysblock"
+# Check for root when needed
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        echo -e "${RED}Error: This command requires sudo${NC}"
+        echo "Run: sudo alwaysblock-dns $1"
+        exit 1
+    fi
+}
+
+# Always use the actual user's home for backup files
+ACTUAL_USER=${SUDO_USER:-$USER}
+ACTUAL_HOME=$(eval echo ~$ACTUAL_USER)
+CONFIG_DIR="$ACTUAL_HOME/.config/alwaysblock"
 mkdir -p "$CONFIG_DIR"
 
 case "${1:-}" in
     enable)
+        check_root "enable"
         echo "Setting DNS to 127.0.0.1 for all active networks..."
         while IFS= read -r service; do
             if [[ ! "$service" =~ ^\* ]] && [ -n "$service" ]; then
@@ -40,7 +53,7 @@ case "${1:-}" in
                         echo "$CURRENT" > "$CONFIG_DIR/.dns_backup_$(echo "$service" | tr ' ' '_')"
                     fi
                     
-                    sudo networksetup -setdnsservers "$service" 127.0.0.1
+                    networksetup -setdnsservers "$service" 127.0.0.1
                     echo "✓ Set DNS for $service"
                 fi
             fi
@@ -48,17 +61,18 @@ case "${1:-}" in
         ;;
         
     disable)
+        check_root "disable"
         echo "Restoring original DNS settings..."
         while IFS= read -r service; do
             if [[ ! "$service" =~ ^\* ]] && [ -n "$service" ]; then
                 BACKUP_FILE="$CONFIG_DIR/.dns_backup_$(echo "$service" | tr ' ' '_')"
                 if [ -f "$BACKUP_FILE" ]; then
                     SERVERS=$(cat "$BACKUP_FILE")
-                    sudo networksetup -setdnsservers "$service" $SERVERS
+                    networksetup -setdnsservers "$service" $SERVERS
                     rm "$BACKUP_FILE"
                     echo "✓ Restored DNS for $service"
                 else
-                    sudo networksetup -setdnsservers "$service" "Empty"
+                    networksetup -setdnsservers "$service" "Empty"
                     echo "✓ Reset DNS for $service to automatic"
                 fi
             fi

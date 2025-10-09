@@ -1,152 +1,123 @@
-# alwaysblock configuration example
-# This file demonstrates all available configuration options
+# alwaysblock configuration
+# Block distracting websites and unblock them with intentional delays
 
-# Default profile to use when none is specified
+# How concurrent unblocks work:
+# If you unblock slack (1 min wait), then try to unblock youtube while
+# slack is still pending, youtube gets: 10 min (base) + 5 min (penalty) = 15 min wait
+# Each additional pending unblock adds another 5 min penalty.
+# This discourages opening multiple sites at once.
+
 default_profile: unblock
 
-# Domain configuration
+# Domains to block
 domains:
-  # Individual domains with tags
-  netflix.com:
-    tags: [entertainment, streaming, ultra_distracting]
-  
-  youtube.com:
-    tags: [entertainment, video, ultra_distracting]
-  
-  twitter.com:
-    tags: [social, news, distracting]
-  
-  facebook.com:
-    tags: [social, distracting]
-    
+  # Social Media
   reddit.com:
-    tags: [social, news, ultra_distracting]
-  
+    tags: [social]
+  twitter.com:
+    tags: [social, news]
+  x.com:
+    tags: [social, news]
+  facebook.com:
+    tags: [social]
   instagram.com:
-    tags: [social, ultra_distracting]
+    tags: [social]
+  linkedin.com:
+    tags: [social, work]
+  tiktok.com:
+    tags: [social]
   
-  # Domain groups - collections of related domains
+  # Entertainment
+  youtube.com:
+    tags: [entertainment, streaming]
+  netflix.com:
+    tags: [entertainment, streaming]
+  hulu.com:
+    tags: [entertainment, streaming]
+  twitch.tv:
+    tags: [entertainment, streaming]
+  spotify.com:
+    tags: [entertainment, music]
+  
+  # News
+  nytimes.com:
+    tags: [news]
+  wsj.com:
+    tags: [news]
+  bbc.com:
+    tags: [news]
+  cnn.com:
+    tags: [news]
+  theguardian.com:
+    tags: [news]
+  reuters.com:
+    tags: [news]
+  bloomberg.com:
+    tags: [news, finance]
+  
+  # Shopping
+  amazon.com:
+    tags: [shopping]
+  ebay.com:
+    tags: [shopping]
+  
+  # Domain groups (multiple related domains)
   google:
     domains:
       - google.com
       - gmail.com
-      - mail.google.com
       - calendar.google.com
       - docs.google.com
       - drive.google.com
       - meet.google.com
     tags: [work, productivity]
   
-  news:
-    domains:
-      - nytimes.com
-      - wsj.com
-      - reuters.com
-      - bbc.com
-      - cnn.com
-      - theguardian.com
-      - bloomberg.com
-    tags: [news, reading]
-  
-  dev:
-    domains:
-      - github.com
-      - stackoverflow.com
-      - gitlab.com
-      - bitbucket.org
-      - npmjs.com
-      - pypi.org
-    tags: [development, work]
-  
   slack:
     domains:
       - slack.com
       - app.slack.com
     tags: [work, communication]
-
-# Profile definitions
+  
+# Profiles (different unblocking strategies)
 profiles:
-  # Standard unblock with moderate wait time
+  # Default profile with wait times
   unblock:
-    description: "Standard unblock with wait time"
+    description: "Standard unblock"
     wait:
-      base: 5              # Base wait time in minutes
-      concurrent_penalty: 5 # Additional minutes per concurrent session
-    duration: 30           # How long domains stay unblocked (minutes)
-    # Tag-based wait time overrides
+      base: 5              # 5 minute wait
+      concurrent_penalty: 5 # +5 min per concurrent unblock
+    duration: 30           # Stay unblocked for 30 minutes
     tag_rules:
-      - tags: [ultra_distracting]
-        wait_override: 30  # 30 minute wait for ultra distracting sites
-      - tags: [social]
-        wait_override: 15  # 15 minute wait for social media
+      - tags: [work, communication]
+        wait_override: 1   # 1 min wait for Slack, Gmail
+      - tags: [streaming]
+        wait_override: 10  # 10 min wait for Netflix, YouTube
   
-  # Quick unblock for brief tasks
+  # Quick access
   quick:
-    description: "Quick 5 minute unblock"
-    wait: 2
+    description: "Quick 5 minute access"
+    wait: 1
     duration: 5
-    cooldown: 30  # Can only use once per 30 minutes
+    cooldown: 30  # Can only use once per 30 min
   
-  # Emergency bypass - use sparingly
+  # Emergency bypass
   bypass:
-    description: "Emergency bypass - once per hour"
+    description: "Emergency bypass"
     wait: 0
     duration: 5
-    cooldown: 60  # Can only use once per hour
+    cooldown: 60  # Once per hour
   
-  # Work mode - only unblock work-related sites
+  # Work mode - only work sites
   work:
-    description: "Work mode - productivity sites only"
-    tags: [work, productivity, development]  # Only unblock these tags
+    description: "Work sites only"
+    tags: [work, productivity, development]
     wait: 0
     duration: 120  # 2 hours
     cooldown: 30
   
-  # Reading mode - news and articles
-  reading:
-    description: "Reading mode - news sites only"
-    tags: [news, reading]
-    wait: 5
-    duration: 30
-    tag_rules:
-      - tags: [social]  # Exclude social media even if tagged as news
-        exclude: true
-  
-  # Nuclear option - unblock everything
-  nuclear:
-    description: "Unblock everything - use with caution"
-    all: true  # Unblocks all configured domains
-    wait: 30   # Long wait time to discourage use
-    duration: 15
-    cooldown: 240  # 4 hour cooldown
-  
-  # Email only
+  # Email/Slack only
   email:
-    description: "Email access only"
-    only: [gmail, "mail.google.com"]  # Specific domains only
+    description: "Email and Slack only"
+    only: [google, slack]
     wait: 0
     duration: 15
-  
-  # Custom profile examples
-  
-  # Morning routine
-  morning:
-    description: "Morning routine - news and email"
-    tags: [news, work]
-    wait: 0
-    duration: 30
-    # Only available 6am-9am
-    time_restriction:
-      start: "06:00"
-      end: "09:00"
-  
-  # Focus mode with progressive delays
-  focus:
-    description: "Focus mode with increasing delays"
-    wait:
-      base: 10
-      concurrent_penalty: 10
-      # Each use today adds more wait time
-      daily_penalty: 5
-    duration: 20
-    max_daily_uses: 3  # Limit uses per day

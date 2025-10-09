@@ -30,8 +30,11 @@ print_usage() {
 
 PLIST_NAME="com.alwaysblock.daemon"
 PLIST_PATH="/Library/LaunchDaemons/$PLIST_NAME.plist"
-VENV_DIR="$HOME/.alwaysblock-venv"
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Get actual user info
+ACTUAL_USER=${SUDO_USER:-$USER}
+ACTUAL_HOME=$(eval echo ~$ACTUAL_USER)
+CONFIG_PATH="$ACTUAL_HOME/.config/alwaysblock/config.yaml"
 
 case "${1:-}" in
     install)
@@ -52,8 +55,9 @@ case "${1:-}" in
     <string>$PLIST_NAME</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$VENV_DIR/bin/python3</string>
-        <string>$REPO_DIR/alwaysblockd.py</string>
+        <string>/usr/local/bin/alwaysblockd</string>
+        <string>--config</string>
+        <string>$CONFIG_PATH</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -67,7 +71,7 @@ case "${1:-}" in
     <key>StandardErrorPath</key>
     <string>/var/log/alwaysblock.error.log</string>
     <key>WorkingDirectory</key>
-    <string>$REPO_DIR</string>
+    <string>$ACTUAL_HOME</string>
     <key>UserName</key>
     <string>root</string>
 </dict>
@@ -75,9 +79,16 @@ case "${1:-}" in
 EOF
         
         sudo chmod 644 "$PLIST_PATH"
-        sudo launchctl load "$PLIST_PATH"
+        sudo launchctl load "$PLIST_PATH" 2>&1
         
-        echo -e "${GREEN}✓ Service installed and started${NC}"
+        # Check if actually started
+        sleep 1
+        if sudo launchctl list | grep -q "$PLIST_NAME"; then
+            echo -e "${GREEN}✓ Service installed and started${NC}"
+        else
+            echo -e "${GREEN}✓ Service installed${NC}"
+            echo -e "${YELLOW}Note: Service may not have started. Check logs:${NC}"
+        fi
         echo "Logs: /var/log/alwaysblock.log"
         ;;
         

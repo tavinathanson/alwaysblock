@@ -216,7 +216,7 @@ echo "   (starts automatically, restarts on crash, manages logs)"
 echo
 echo -e "   OR manually start: ${YELLOW}sudo alwaysblockd${NC}"
 echo
-echo -e "2. Configure DNS: ${YELLOW}alwaysblock-dns enable${NC}"
+echo -e "2. Configure DNS: ${YELLOW}sudo alwaysblock-dns enable${NC}"
 echo "3. Edit config: $CONFIG_FILE"
 echo
 echo "Commands:"

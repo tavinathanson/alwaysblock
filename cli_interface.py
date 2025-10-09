@@ -21,7 +21,8 @@ class CLIServer:
         self.dns_proxy = dns_proxy
         self.pf_manager = pf_manager
         self.db = db
-        self.socket_path = Path.home() / '.alwaysblock' / 'control.sock'
+        # Use /tmp for socket - accessible by all users
+        self.socket_path = Path('/tmp/alwaysblock.sock')
         self.server = None
         
     async def start(self):
@@ -39,8 +40,8 @@ class CLIServer:
             path=str(self.socket_path)
         )
         
-        # Set socket permissions
-        os.chmod(self.socket_path, 0o600)
+        # Set socket permissions to allow all users
+        os.chmod(self.socket_path, 0o666)
         
         logger.info(f"CLI control server listening on {self.socket_path}")
         

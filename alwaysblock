@@ -14,7 +14,8 @@ class AlwaysBlockClient:
     """Client for alwaysblock daemon"""
     
     def __init__(self):
-        self.socket_path = Path.home() / '.alwaysblock' / 'control.sock'
+        # Use /tmp for socket - accessible by all users
+        self.socket_path = Path('/tmp/alwaysblock.sock')
     
     def send_command(self, command: str, args: dict = None) -> dict:
         """Send command to daemon"""

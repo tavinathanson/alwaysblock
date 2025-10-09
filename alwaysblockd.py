@@ -27,7 +27,10 @@ class AlwaysBlockDaemon:
     def __init__(self, config_path: Path, dns_port: int = 5353):
         self.config_path = config_path
         self.dns_port = dns_port
-        self.db = Database()
+        
+        # Use same directory as config for database
+        db_path = config_path.parent.parent / '.alwaysblock' / 'alwaysblock.db'
+        self.db = Database(db_path)
         self.config_manager = ConfigManager(config_path, db=self.db)
         self.pf_manager = PFManager()
         self.dns_proxy = DNSProxy(
@@ -134,7 +137,7 @@ def main():
         '--config', '-c',
         type=Path,
         default=Path.home() / '.config' / 'alwaysblock' / 'config.yaml',
-        help='Path to configuration file'
+        help='Path to configuration file (use absolute path when running as root)'
     )
     parser.add_argument(
         '--port', '-p',

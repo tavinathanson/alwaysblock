@@ -134,6 +134,12 @@ The installer automatically handles service restarts.
 ### Config Changes
 Edit `~/.config/alwaysblock/config.yaml` - changes apply on next unblock.
 
+### Uninstall
+```bash
+cd alwaysblock && sudo ./uninstall.sh
+```
+This removes everything except your config file.
+
 
 ## Troubleshooting
 
