@@ -23,10 +23,9 @@ class AlwaysBlockDirect:
         self.config_path = Path.home() / '.config' / 'alwaysblock' / 'config.yaml'
         self.db_path = Path.home() / '.local' / 'share' / 'alwaysblock' / 'alwaysblock.db'
         
-        # JSON file for Network Extension (in app container)
-        container_path = Path.home() / 'Library' / 'Containers' / 'com.tavinathanson.AlwaysBlockApp' / 'Data' / 'Documents'
-        container_path.mkdir(parents=True, exist_ok=True)
-        self.json_path = container_path / 'alwaysblock_domains.json'
+        # JSON file for Network Extension (using /tmp for local signing without App Groups)
+        # Both CLI and system extension can access /tmp
+        self.json_path = Path('/tmp/alwaysblock_domains.json')
         
         # Initialize components
         self.config_manager = ConfigManager(str(self.config_path))
@@ -183,22 +182,15 @@ class AlwaysBlockDirect:
     def _process_expired_sessions(self):
         """Process any expired sessions"""
         # This mimics what the daemon scheduler would do
-        now = datetime.now()
-        
-        # Activate pending sessions
-        pending = self.db.get_pending_sessions()
-        for session in pending:
-            if now >= session['start_at']:
-                self.db.activate_session(session['id'])
-                
-        # Complete expired active sessions  
-        active = self.db.get_active_sessions()
-        for session in active:
-            if now >= session['end_at']:
-                self.db.complete_session(session['id'])
-                
+
+        # Activate pending sessions that are ready
+        activated = self.db.activate_pending_sessions()
+
+        # Expire active sessions that are done
+        expired = self.db.expire_sessions()
+
         # Update JSON if anything changed
-        if pending or active:
+        if activated or expired:
             self._write_domains_for_extension()
 
 

@@ -23,6 +23,20 @@ AlwaysBlock consists of three components:
 
 No background daemon is needed - the Network Extension runs continuously and the CLI directly updates the blocking rules.
 
+### How Network Extension Blocking Works
+
+The Network Extension uses macOS's `NEFilterDataProvider` to intercept network traffic:
+
+1. **Safari & System-Respecting Apps**: Connections include hostname via `remoteHostname`, blocking is straightforward
+2. **Chrome & Chromium Browsers**: Often make direct IP connections without hostnames, requiring SNI (Server Name Indication) inspection
+3. **SNI Extraction**: For connections without hostnames, the filter peeks at TLS ClientHello packets to extract the actual domain being accessed
+
+**Current Limitations:**
+- ✅ **Safari**: Fully blocked - hostnames provided, blocking works perfectly
+- ⚠️ **Chrome**: Partially blocked - SNI extraction works but requires listing all subdomains (e.g., `reddit.com`, `redditstatic.com`, `redd.it`)
+  - **Note**: Disable QUIC in Chrome (`chrome://flags/#enable-quic` → Disabled) for better blocking compatibility
+- 🔧 **Future**: Considering PF (Packet Filter) or hosts file approach for more robust Chrome blocking
+
 ## Prerequisites
 
 - macOS 13+ (Ventura or later)
@@ -155,8 +169,10 @@ When you block/unblock a main domain, related CDNs are included:
 
 The Network Extension reads from:
 ```
-~/Library/Containers/com.tavinathanson.AlwaysBlockApp/Data/Documents/alwaysblock_domains.json
+/tmp/alwaysblock_domains.json
 ```
+
+**Why `/tmp`?** App Group containers require a paid Apple Developer account for proper signing. Using `/tmp` allows local development without a certificate while still sharing data between the CLI and Network Extension.
 
 ## Troubleshooting
 
@@ -168,15 +184,46 @@ The Network Extension reads from:
    ```
    Should show "com.tavinathanson.AlwaysBlockApp.AlwaysBlockExtension" as "activated enabled"
 
-2. Check the JSON file:
+2. Check the JSON file exists and has domains:
    ```bash
-   cat ~/Library/Containers/com.tavinathanson.AlwaysBlockApp/Data/Documents/alwaysblock_domains.json
+   cat /tmp/alwaysblock_domains.json
    ```
 
-3. Force refresh:
+3. Force refresh by running any CLI command:
    ```bash
    alwaysblock status
    ```
+
+4. Check Console.app logs:
+   - Open Console.app
+   - Filter by "AlwaysBlock"
+   - Look for "🚀 Filter started with X blocked domains" (should be > 0)
+   - Try visiting a blocked site and look for "🚫 BLOCKING flow to: domain.com"
+
+5. Test in Safari first (works more reliably than Chrome)
+
+### Chrome-specific issues?
+
+Chrome uses modern networking protocols that can bypass content filters:
+
+1. **Disable QUIC** (HTTP/3 over UDP):
+   - Visit `chrome://flags/#enable-quic`
+   - Set to "Disabled"
+   - Restart Chrome
+
+2. **Ensure all subdomains are listed** in your config:
+   ```yaml
+   reddit:
+     domains:
+       - reddit.com
+       - www.reddit.com
+       - redditstatic.com  # Required for CSS/JS
+       - redd.it           # Required for images
+   ```
+
+3. **Check SNI extraction is working** in Console.app:
+   - Look for "Blocking flow to SNI: domain.com" messages
+   - If missing, Chrome might be using direct IP connections
 
 ### Build errors in Xcode?
 
@@ -189,6 +236,44 @@ The Network Extension reads from:
 - Make sure you're in Recovery Mode
 - On newer Macs, you may need to authenticate multiple times
 - Alternative: Use a Developer ID certificate (requires paid Apple Developer account)
+
+## What We Learned
+
+### Network Extension Journey
+
+This project went through several iterations to achieve reliable blocking:
+
+1. **Initial Attempt: DNS Manipulation** ❌
+   - Used `/etc/hosts` and DNS servers
+   - Failed: Chrome uses DNS-over-HTTPS (DoH), bypassing local DNS
+
+2. **Second Attempt: macOS Network Extensions** ⚠️
+   - Implemented `NEFilterDataProvider` for content filtering
+   - Works perfectly for Safari and system-respecting apps
+   - Partial success for Chrome - requires SNI extraction
+
+3. **Key Technical Challenges:**
+   - **No hostname for Chrome**: Chrome makes direct IP connections without providing `remoteHostname`
+   - **SNI extraction required**: Had to parse TLS ClientHello packets to extract Server Name Indication
+   - **Subdomain explosion**: Must list all subdomains (e.g., `reddit.com`, `redditstatic.com`, `redd.it`) for complete blocking
+   - **App Groups vs `/tmp`**: App Groups need paid developer cert, so using `/tmp` for local development
+
+4. **What Actually Works:**
+   - ✅ Safari: 100% blocking via `NEFilterDataProvider`
+   - ⚠️ Chrome: Partial blocking via SNI extraction (needs all subdomains listed)
+   - 🔧 Future: PF (Packet Filter) or hosts file hybrid for full Chrome support
+
+### Code Highlights
+
+**SNI Extraction** (`FilterDataProvider.swift:109-181`):
+When Chrome doesn't provide a hostname, we:
+1. Return `.filterDataVerdict()` to peek at outbound data
+2. Parse the TLS ClientHello packet (starts with `0x16 0x03`)
+3. Extract the SNI hostname from extension type `0x0000`
+4. Block based on the extracted hostname
+
+**Shared Data** (`/tmp/alwaysblock_domains.json`):
+The CLI writes blocked domains as JSON, the Network Extension watches and reloads every second.
 
 ## Development
 

@@ -9,21 +9,27 @@ class FilterDataProvider: NEFilterDataProvider {
     private let storageURL: URL
     
     override init() {
-        // Store blocked domains in app's documents directory
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        self.storageURL = documentsPath.appendingPathComponent("alwaysblock_domains.json")
-        
+        // Use a shared location accessible without App Groups (for local signing)
+        // Both CLI and extension can access /tmp
+        self.storageURL = URL(fileURLWithPath: "/tmp/alwaysblock_domains.json")
+
         super.init()
+
+        log.error("📁 FilterDataProvider init - storage URL: \(self.storageURL.path)")
+        log.error("📁 File exists: \(FileManager.default.fileExists(atPath: self.storageURL.path))")
+
         loadBlockedDomains()
     }
     
     override func startFilter(completionHandler: @escaping (Error?) -> Void) {
         log.info("Starting AlwaysBlock content filter")
         loadBlockedDomains()
-        
+
         // Set up file watcher for domain updates
         startFileWatcher()
-        
+
+        log.info("Filter started with \(self.blockedDomains.count) blocked domains")
+
         completionHandler(nil)
     }
     
@@ -33,26 +39,104 @@ class FilterDataProvider: NEFilterDataProvider {
     }
     
     override func handleNewFlow(_ flow: NEFilterFlow) -> NEFilterNewFlowVerdict {
+        // On macOS, we only get NEFilterSocketFlow
         guard let socketFlow = flow as? NEFilterSocketFlow else {
             return .allow()
         }
-        
+
         // Get hostname from the remote endpoint
-        guard let hostname = socketFlow.remoteHostname else {
-            // No hostname available (likely an IP address), allow the connection
+        if let hostname = socketFlow.remoteHostname {
+            // Clean expired domains
+            cleanExpiredDomains()
+
+            // Check if domain should be blocked
+            if shouldBlockDomain(hostname) {
+                log.info("Blocking flow to: \(hostname, privacy: .public)")
+                return .drop()
+            }
+
             return .allow()
+        } else {
+            // For flows without hostname (like Chrome's direct IP connections),
+            // we need to peek at the data to extract the SNI hostname
+            // On macOS, we use filterDataVerdict to inspect outbound data
+            let peekBytes = 512 // Enough to capture TLS ClientHello SNI
+            return NEFilterNewFlowVerdict.filterDataVerdict(
+                withFilterInbound: false,
+                peekInboundBytes: 0,
+                filterOutbound: true,
+                peekOutboundBytes: peekBytes
+            )
         }
-        
-        // Clean expired domains
-        cleanExpiredDomains()
-        
-        // Check if domain should be blocked
-        if shouldBlockDomain(hostname) {
-            log.info("Blocking flow to: \(hostname)")
-            return .drop()
+    }
+
+    override func handleOutboundData(from flow: NEFilterFlow, readBytesStartOffset offset: Int, readBytes: Data) -> NEFilterDataVerdict {
+        // Try to extract SNI hostname from TLS ClientHello
+        if let hostname = extractSNIHostname(from: readBytes) {
+            if shouldBlockDomain(hostname) {
+                log.info("Blocking flow to SNI: \(hostname, privacy: .public)")
+                return .drop()
+            }
         }
-        
+
+        // Allow the data through
         return .allow()
+    }
+
+    private func extractSNIHostname(from data: Data) -> String? {
+        // TLS ClientHello SNI extraction
+        // Reference: RFC 6066 Section 3 (Server Name Indication)
+
+        guard data.count > 43 else { return nil }
+
+        // Check if this looks like a TLS ClientHello (0x16 = handshake, 0x03 = SSL/TLS)
+        guard data[0] == 0x16, data[1] == 0x03 else { return nil }
+
+        // Skip: record header (5) + handshake type (1) + handshake length (3) +
+        //       client version (2) + random (32) + session ID length (1)
+        var pos = 5 + 1 + 3 + 2 + 32
+        guard pos < data.count else { return nil }
+
+        // Skip session ID
+        let sessionIdLength = Int(data[pos])
+        pos += 1 + sessionIdLength
+        guard pos + 2 < data.count else { return nil }
+
+        // Skip cipher suites
+        let cipherSuitesLength = Int(UInt16(data[pos]) << 8 | UInt16(data[pos + 1]))
+        pos += 2 + cipherSuitesLength
+        guard pos + 1 < data.count else { return nil }
+
+        // Skip compression methods
+        let compressionMethodsLength = Int(data[pos])
+        pos += 1 + compressionMethodsLength
+        guard pos + 2 < data.count else { return nil }
+
+        // Now we're at extensions
+        let extensionsLength = Int(UInt16(data[pos]) << 8 | UInt16(data[pos + 1]))
+        pos += 2
+        let extensionsEnd = pos + extensionsLength
+
+        // Search for SNI extension (type 0x0000)
+        while pos + 4 <= extensionsEnd && pos + 4 < data.count {
+            let extensionType = UInt16(data[pos]) << 8 | UInt16(data[pos + 1])
+            let extensionLength = Int(UInt16(data[pos + 2]) << 8 | UInt16(data[pos + 3]))
+
+            if extensionType == 0x0000 { // SNI extension
+                // SNI format: list length (2), type (1), name length (2), name
+                guard pos + 9 < data.count else { return nil }
+
+                let nameLength = Int(UInt16(data[pos + 7]) << 8 | UInt16(data[pos + 8]))
+                guard pos + 9 + nameLength <= data.count else { return nil }
+
+                let hostnameData = data.subdata(in: (pos + 9)..<(pos + 9 + nameLength))
+                return String(data: hostnameData, encoding: .ascii)
+            }
+
+            pos += 4 + extensionLength
+        }
+
+        return nil
     }
     
     // MARK: - Domain Management
