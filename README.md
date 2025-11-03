@@ -31,11 +31,43 @@ The Network Extension uses macOS's `NEFilterDataProvider` to intercept network t
 2. **Chrome & Chromium Browsers**: Often make direct IP connections without hostnames, requiring SNI (Server Name Indication) inspection
 3. **SNI Extraction**: For connections without hostnames, the filter peeks at TLS ClientHello packets to extract the actual domain being accessed
 
-**Current Limitations:**
-- ✅ **Safari**: Fully blocked - hostnames provided, blocking works perfectly
-- ⚠️ **Chrome**: Partially blocked - SNI extraction works but requires listing all subdomains (e.g., `reddit.com`, `redditstatic.com`, `redd.it`)
-  - **Note**: Disable QUIC in Chrome (`chrome://flags/#enable-quic` → Disabled) for better blocking compatibility
-- 🔧 **Future**: Considering PF (Packet Filter) or hosts file approach for more robust Chrome blocking
+### Why Chrome Is Challenging
+
+Chrome intentionally bypasses many system-level filtering mechanisms as a "privacy and security feature." This creates several challenges:
+
+**DNS Bypassing**: Chrome uses DNS-over-HTTPS (DoH) by default, sending DNS queries through encrypted HTTPS connections to Google's servers (8.8.8.8) instead of using the system's DNS resolver. This completely bypasses traditional DNS-based blocking methods like `/etc/hosts` or custom DNS servers.
+
+**Direct IP Connections**: Chrome often resolves domains internally and makes direct TCP connections to IP addresses without providing the hostname to the operating system's network stack. When our Network Extension sees these connections, `remoteHostname` is `nil`, so we can't block by domain name alone.
+
+**QUIC Protocol**: Chrome defaults to using QUIC (HTTP/3 over UDP) instead of traditional TCP connections when available. QUIC encrypts connection metadata differently than TLS, making hostname extraction more difficult. Our SNI extraction works on standard TLS (TCP) connections but not QUIC, which is why we recommend disabling it via `chrome://flags/#enable-quic`.
+
+**Our Workaround & Its Limitation**: We implemented SNI (Server Name Indication) extraction by peeking at the first 512 bytes of outbound TLS handshake data. When Chrome makes a TLS connection, it includes the target hostname in the ClientHello packet's SNI extension. We parse this binary data to extract the hostname and block accordingly.
+
+However, there are two major limitations:
+
+1. **Multiple Root Domains**: Modern websites use separate domains for CDNs and services. For example, `reddit.com` also loads from `redditstatic.com` (CSS/JS), `redd.it` (images), and `v.redd.it` (videos). These are NOT subdomains of `reddit.com` - they're completely different root domains that must be listed explicitly. Our subdomain matcher works perfectly (e.g., `mail.google.com` matches `google.com`), but it can't know that `redditstatic.com` belongs to Reddit.
+
+2. **Packet-Level Blocking Limitation**: The fundamental issue with `NEFilterDataProvider` is that `handleOutboundData()` returning `.drop()` only drops individual data packets, not the entire TCP connection. Chrome is resilient - when it detects dropped packets, it retries the connection. This creates a race condition where the site blocks for ~1 second (while packets are dropped), then Chrome successfully retries and the connection succeeds. This is why you might see "reddit blocks briefly then loads" in Chrome.
+
+**Technical Deep Dive**: When Chrome connects to a blocked site:
+1. Chrome resolves `reddit.com` via DoH → gets IP `151.101.193.140`
+2. Chrome connects to `151.101.193.140` (no hostname provided to OS)
+3. Network Extension's `handleNewFlow()` sees `remoteHostname = nil`
+4. Extension returns `.filterDataVerdict()` to peek at TLS handshake
+5. Extension's `handleOutboundData()` receives TLS ClientHello packet
+6. `extractSNIHostname()` parses packet → extracts `reddit.com`
+7. `shouldBlockDomain("reddit.com")` returns `true`
+8. Extension returns `.drop()` for that packet
+9. **Chrome retries the TLS handshake** → eventually succeeds
+
+The issue is architectural: `NEFilterDataProvider` can inspect and drop packets, but by the time we've extracted the SNI hostname, the TCP connection is already established. Dropping individual packets doesn't kill the connection, and Chrome simply retries until it succeeds.
+
+**Current State:**
+- ✅ **Safari**: Fully blocked - Safari provides `remoteHostname` directly, allowing immediate blocking at connection time
+- ⚠️ **Chrome**: Unreliable - SNI extraction works, but Chrome bypasses packet-level drops via retry logic
+  - Sites may block for 1-2 seconds before loading
+  - Disable QUIC (`chrome://flags/#enable-quic` → Disabled) required for SNI extraction to work at all
+- 🔧 **Future**: Need kernel-level approach (PF packet filter, transparent proxy, or hosts file) that can kill entire connections, not just packets
 
 ## Prerequisites
 
@@ -260,8 +292,16 @@ This project went through several iterations to achieve reliable blocking:
 
 4. **What Actually Works:**
    - ✅ Safari: 100% blocking via `NEFilterDataProvider`
-   - ⚠️ Chrome: Partial blocking via SNI extraction (needs all subdomains listed)
-   - 🔧 Future: PF (Packet Filter) or hosts file hybrid for full Chrome support
+   - ❌ Chrome: SNI extraction works technically, but `.drop()` at packet level doesn't kill connections
+   - 🔧 Future: PF (Packet Filter), transparent proxy, or hosts file for connection-level blocking
+
+5. **The Packet vs Connection Problem:**
+   - Network Extension can inspect packets and return `.drop()`
+   - But by the time we extract SNI from TLS ClientHello, TCP connection is already established
+   - Dropping packets ≠ killing connection
+   - Chrome detects dropped packets and retries → eventually succeeds
+   - This is why sites "block for 1 second then load" in Chrome
+   - Safari works because it provides `remoteHostname` BEFORE connection is established, allowing blocking at flow creation time
 
 ### Code Highlights
 
