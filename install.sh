@@ -1,226 +1,173 @@
 #!/bin/bash
+# Installation script for AlwaysBlock
+# Handles clean install, upgrade, and uninstall of any previous versions
 
-# alwaysblock installer
 set -e
 
-# Check if running with sudo
-if [ "$EUID" -ne 0 ]; then 
-    echo "This installer requires sudo access to install commands to /usr/local/bin"
-    echo "Please run: sudo ./install.sh"
+echo "AlwaysBlock Installation"
+echo "========================"
+echo ""
+
+# Check for Python 3
+if ! command -v python3 &> /dev/null; then
+    echo "Error: Python 3 is required but not installed"
     exit 1
 fi
 
-# Colors (disable if not in terminal)
-if [ -t 1 ]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    NC='\033[0m'
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Configuration
+VENV_PATH="$HOME/.alwaysblock-venv"
+CONFIG_DIR="$HOME/.config/alwaysblock"
+DATA_DIR="$HOME/.local/share/alwaysblock"
+CLI_SCRIPT="/usr/local/bin/alwaysblock"
+
+echo "Checking for existing installation..."
+
+# Check if proxy was running and system proxy was enabled
+PROXY_WAS_RUNNING=false
+SYSPROXY_WAS_ENABLED=false
+
+if command -v alwaysblock &> /dev/null; then
+    # Check if proxy was running
+    if lsof -i :8905 >/dev/null 2>&1; then
+        PROXY_WAS_RUNNING=true
+    fi
+
+    # Check if system proxy was enabled
+    if networksetup -getwebproxy "Wi-Fi" 2>/dev/null | grep -q "127.0.0.1"; then
+        SYSPROXY_WAS_ENABLED=true
+    fi
+
+    echo "Stopping existing proxy..."
+    sudo alwaysblock stop-proxy 2>/dev/null || true
+fi
+
+# Kill any processes on port 8905
+echo "Cleaning up port 8905..."
+PIDS=$(lsof -ti :8905 2>/dev/null || true)
+if [ ! -z "$PIDS" ]; then
+    echo "Killing existing processes: $PIDS"
+    kill -9 $PIDS 2>/dev/null || true
+fi
+
+# Remove old CLI if exists
+if [ -f "$CLI_SCRIPT" ]; then
+    echo "Removing old CLI..."
+    sudo rm -f "$CLI_SCRIPT"
+fi
+
+# Remove old Network Extension app if exists
+if [ -d "/Applications/AlwaysBlock.app" ]; then
+    echo "Removing old Network Extension app..."
+    rm -rf "/Applications/AlwaysBlock.app"
+fi
+
+# Check for old system extensions
+echo "Checking for old system extensions..."
+if systemextensionsctl list 2>/dev/null | grep -q "AlwaysBlock"; then
+    echo "Found old Network Extension - attempting removal..."
+    echo "(This may show multiple entries from previous installations)"
+    # Try to uninstall - may require reboot to fully remove
+    systemextensionsctl uninstall - com.tavinathanson.AlwaysBlockApp.AlwaysBlockExtension 2>/dev/null || true
+    echo "Note: Old extensions marked for removal. May require reboot to fully clean up."
+fi
+
+# Remove PF rules if they exist
+echo "Cleaning up old PF rules..."
+if [ -f "/etc/pf.anchors/com.alwaysblock" ]; then
+    sudo rm -f "/etc/pf.anchors/com.alwaysblock"
+fi
+
+# Remove PF anchor from pf.conf if it exists
+if [ -f "/etc/pf.conf" ]; then
+    if grep -q "com.alwaysblock" /etc/pf.conf; then
+        echo "Removing PF anchor from pf.conf..."
+        sudo sed -i.backup '/com.alwaysblock/d' /etc/pf.conf
+        sudo sed -i.backup '/AlwaysBlock/d' /etc/pf.conf
+        sudo pfctl -f /etc/pf.conf 2>/dev/null || true
+    fi
+fi
+
+echo ""
+echo "Installing AlwaysBlock..."
+echo ""
+
+# Create virtual environment
+if [ ! -d "$VENV_PATH" ]; then
+    echo "Creating Python virtual environment..."
+    python3 -m venv "$VENV_PATH"
 else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    NC=''
+    echo "Using existing virtual environment..."
 fi
 
-# Paths (use SUDO_USER's home if running with sudo)
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -n "$SUDO_USER" ]; then
-    USER_HOME=$(eval echo ~$SUDO_USER)
+# Install/upgrade dependencies (disable proxy so pip can connect)
+echo "Installing dependencies..."
+NO_PROXY="*" "$VENV_PATH/bin/pip" install -q --upgrade pip
+NO_PROXY="*" "$VENV_PATH/bin/pip" install -q PyYAML
+
+# Create config directories
+mkdir -p "$CONFIG_DIR"
+mkdir -p "$DATA_DIR"
+
+# Create symlink to example config if needed (preserve existing config)
+if [ ! -e "$CONFIG_DIR/config.yaml" ]; then
+    if [ -f "$SCRIPT_DIR/config.yaml.example" ]; then
+        echo "Creating default configuration..."
+        ln -sf "$SCRIPT_DIR/config.yaml.example" "$CONFIG_DIR/config.yaml"
+        echo "Config symlinked to: $SCRIPT_DIR/config.yaml.example"
+    fi
 else
-    USER_HOME=$HOME
+    echo "Preserving existing configuration..."
 fi
-VENV_DIR="$USER_HOME/.alwaysblock-venv"
-CONFIG_DIR="$USER_HOME/.config/alwaysblock"
-CONFIG_FILE="$CONFIG_DIR/config.yaml"
 
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-    exit 1
-}
-
-print_success() {
-    echo -e "${GREEN}[✓]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[!]${NC} $1"
-}
-
-# Check Python version
-check_python() {
-    if ! command -v python3 &> /dev/null; then
-        print_error "Python 3 not found. Install Python 3.8+"
-    fi
-    
-    PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
-    if [ "$(printf '%s\n' "3.8" "$PYTHON_VERSION" | sort -V | head -n1)" != "3.8" ]; then
-        print_error "Python 3.8+ required (found $PYTHON_VERSION)"
-    fi
-    
-    print_success "Python $PYTHON_VERSION"
-}
-
-# Create and setup venv
-setup_venv() {
-    if [ -d "$VENV_DIR" ]; then
-        print_warning "Removing existing venv at $VENV_DIR"
-        rm -rf "$VENV_DIR"
-    fi
-    
-    # Create venv as the actual user if running with sudo
-    if [ -n "$SUDO_USER" ]; then
-        sudo -u "$SUDO_USER" python3 -m venv "$VENV_DIR"
-    else
-        python3 -m venv "$VENV_DIR"
-    fi
-    print_success "Created venv at $VENV_DIR"
-    
-    # Install dependencies as the actual user
-    if [ -n "$SUDO_USER" ]; then
-        sudo -u "$SUDO_USER" "$VENV_DIR/bin/pip" install --upgrade pip &>/dev/null
-        sudo -u "$SUDO_USER" "$VENV_DIR/bin/pip" install -r "$REPO_DIR/requirements.txt"
-    else
-        source "$VENV_DIR/bin/activate"
-        pip install --upgrade pip &>/dev/null
-        pip install -r "$REPO_DIR/requirements.txt"
-        deactivate
-    fi
-    
-    print_success "Installed dependencies"
-}
-
-# Setup config
-setup_config() {
-    # Create config dir as the actual user if running with sudo
-    if [ -n "$SUDO_USER" ]; then
-        sudo -u "$SUDO_USER" mkdir -p "$CONFIG_DIR"
-    else
-        mkdir -p "$CONFIG_DIR"
-    fi
-    
-    if [ -f "$CONFIG_FILE" ]; then
-        print_warning "Config exists at $CONFIG_FILE (keeping it)"
-    else
-        # Create minimal config
-        cat > "$CONFIG_FILE" << 'EOF'
-# alwaysblock configuration
-default_profile: standard
-
-domains:
-  # Add domains you want to block
-  example.com:
-    tags: [distracting]
-
-profiles:
-  standard:
-    wait:
-      base: 5
-    duration: 30
-  
-  quick:
-    wait: 0
-    duration: 5
-    cooldown: 30
-EOF
-        print_success "Created config at $CONFIG_FILE"
-        print_warning "Edit $CONFIG_FILE to add domains to block"
-    fi
-}
-
-# Install executables
-install_executables() {
-    # CLI wrapper
-    cat > /tmp/alwaysblock << EOF
+# Install CLI script
+echo "Installing CLI..."
+sudo tee "$CLI_SCRIPT" > /dev/null <<EOF
 #!/bin/bash
-source "$VENV_DIR/bin/activate"
-exec python3 "$REPO_DIR/alwaysblock" "\$@"
+# AlwaysBlock CLI wrapper
+exec ~/.alwaysblock-venv/bin/python3 "$SCRIPT_DIR/alwaysblock.py" "\$@"
 EOF
-    
-    # Daemon wrapper  
-    cat > /tmp/alwaysblockd << EOF
-#!/bin/bash
-source "$VENV_DIR/bin/activate"
-exec python3 "$REPO_DIR/alwaysblockd.py" "\$@"
-EOF
-    
-    mkdir -p /usr/local/bin
-    cp /tmp/alwaysblock /usr/local/bin/
-    cp /tmp/alwaysblockd /usr/local/bin/
-    cp "$REPO_DIR/dns-helper.sh" /usr/local/bin/alwaysblock-dns
-    cp "$REPO_DIR/service-helper.sh" /usr/local/bin/alwaysblock-service
-    chmod +x /usr/local/bin/alwaysblock
-    chmod +x /usr/local/bin/alwaysblockd
-    chmod +x /usr/local/bin/alwaysblock-dns
-    chmod +x /usr/local/bin/alwaysblock-service
-    
-    rm /tmp/alwaysblock /tmp/alwaysblockd
-    print_success "Installed commands to /usr/local/bin"
-}
 
-# Main
-echo -e "${GREEN}Installing alwaysblock${NC}"
-echo
+sudo chmod +x "$CLI_SCRIPT"
 
-check_python
+echo ""
+echo "✅ Installation complete!"
+echo ""
 
-# Check if daemon is running (either manually or as service)
-DAEMON_WAS_RUNNING=false
-SERVICE_WAS_RUNNING=false
-
-# Check for service
-if sudo launchctl list | grep -q "com.alwaysblock.daemon"; then
-    SERVICE_WAS_RUNNING=true
-    print_warning "Stopping alwaysblock service..."
-    sudo launchctl unload /Library/LaunchDaemons/com.alwaysblock.daemon.plist 2>/dev/null || true
-    sleep 2
+# Restart services if they were running
+if [ "$PROXY_WAS_RUNNING" = true ] || [ "$SYSPROXY_WAS_ENABLED" = true ]; then
+    echo "Restarting proxy daemon..."
+    sudo alwaysblock start-proxy
 fi
 
-# Check for manual daemon
-if pgrep -f alwaysblockd > /dev/null; then
-    DAEMON_WAS_RUNNING=true
-    print_warning "Stopping existing daemon..."
-    sudo killall alwaysblockd 2>/dev/null || true
-    sleep 2
-    
-    if pgrep -f alwaysblockd > /dev/null; then
-        print_warning "Daemon still running, forcing kill..."
-        sudo killall -9 alwaysblockd 2>/dev/null || true
-        sleep 1
-    fi
+if [ "$SYSPROXY_WAS_ENABLED" = true ]; then
+    echo "Re-enabling system proxy..."
+    sudo alwaysblock enable-proxy
 fi
 
-setup_venv
-setup_config
-install_executables
-
-echo
-echo -e "${GREEN}Installation complete!${NC}"
-echo
-
-# Restart service if it was running
-if [ "$SERVICE_WAS_RUNNING" = true ]; then
-    print_warning "Restarting service..."
-    sudo launchctl load /Library/LaunchDaemons/com.alwaysblock.daemon.plist
-    print_success "Service restarted"
-elif [ "$DAEMON_WAS_RUNNING" = true ]; then
-    echo
-    echo "The daemon was stopped for the update."
-    echo -e "To restart it, run: ${YELLOW}sudo alwaysblockd${NC}"
+# Show status if services were restarted
+if [ "$PROXY_WAS_RUNNING" = true ] || [ "$SYSPROXY_WAS_ENABLED" = true ]; then
+    echo ""
+    alwaysblock status
+    echo ""
+else
+    # First time install - show setup instructions
+    echo "Setup (run these commands):"
+    echo "  1. sudo alwaysblock start-proxy       # Start the proxy daemon"
+    echo "  2. sudo alwaysblock enable-proxy      # Enable system proxy"
+    echo "  3. alwaysblock status                 # Verify everything is running"
+    echo ""
 fi
 
-echo
-echo "Next steps:"
-echo -e "1. ${GREEN}RECOMMENDED:${NC} Install as service: ${YELLOW}sudo alwaysblock-service install${NC}"
-echo "   (starts automatically, restarts on crash, manages logs)"
-echo
-echo -e "   OR manually start: ${YELLOW}sudo alwaysblockd${NC}"
-echo
-echo -e "2. Configure DNS: ${YELLOW}sudo alwaysblock-dns enable${NC}"
-echo "3. Edit config: $CONFIG_FILE"
-echo
-echo "Commands:"
-echo "  alwaysblock status              # Check what's blocked"
-echo "  alwaysblock unblock [domain]    # Unblock a domain"
-echo "  alwaysblock-dns status          # Check DNS settings"
-echo "  alwaysblock-service status      # Check service status"
+echo "Usage:"
+echo "  alwaysblock status                    # Show current status"
+echo "  alwaysblock unblock reddit            # Temporarily unblock reddit"
+echo "  alwaysblock block-all                 # Block everything immediately"
+echo ""
+echo "Files:"
+echo "  Configuration: $CONFIG_DIR/config.yaml"
+echo "  Proxy logs:    /tmp/proxy.log"
+echo "  Documentation: $SCRIPT_DIR/README.md"
+echo ""

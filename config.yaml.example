@@ -1,171 +1,168 @@
-# alwaysblock configuration
-# Block distracting websites and unblock them with intentional delays
-
-# How concurrent unblocks work:
-# If you unblock slack (1 min wait), then try to unblock youtube while
-# slack is still pending, youtube gets: 10 min (base) + 5 min (penalty) = 15 min wait
-# Each additional pending unblock adds another 5 min penalty.
-# This discourages opening multiple sites at once.
+# AlwaysBlock Configuration
+# Block distracting websites with intentional delays
 
 default_profile: unblock
 
-# Domains to block
 domains:
-  # Social Media
-  reddit.com:
-    tags: [social]
-  twitter.com:
-    tags: [social, news]
-  x.com:
-    tags: [social, news]
-  facebook.com:
-    tags: [social]
-  instagram.com:
-    tags: [social]
-  linkedin.com:
-    tags: [social, work]
-  tiktok.com:
-    tags: [social]
-  
-  # Entertainment
-  youtube.com:
-    tags: [entertainment, streaming]
+  # Individual domains
   netflix.com:
-    tags: [entertainment, streaming]
-  hulu.com:
-    tags: [entertainment, streaming]
-  twitch.tv:
-    tags: [entertainment, streaming]
-  spotify.com:
-    tags: [entertainment, music]
-  
-  # News
+    tags: [ultra_distracting, entertainment]
+
+  instagram.com:
+    tags: [social, distracting]
+
+  reddit.com:
+    tags: [social, distracting]
+
+  youtube.com:
+    tags: [entertainment, distracting]
+
+  eventbrite.com:
+    tags: [events]
+
   nytimes.com:
     tags: [news]
-  wsj.com:
-    tags: [news]
-  bbc.com:
-    tags: [news]
+
   cnn.com:
     tags: [news]
-  theguardian.com:
+
+  timesofisrael.com:
     tags: [news]
-  reuters.com:
+
+  jpost.com:
     tags: [news]
-  bloomberg.com:
-    tags: [news, finance]
-  
-  # Shopping
-  amazon.com:
-    tags: [shopping]
-  ebay.com:
-    tags: [shopping]
-  
-  # Domain groups (multiple related domains)
-  google:
-    domains:
-      - google.com
-      - gmail.com
-      - mail.google.com
-      - calendar.google.com
-      - docs.google.com
-      - drive.google.com
-      - meet.google.com
-      - googleusercontent.com
-      - gstatic.com
-      - googleapis.com
-    tags: [work, productivity]
-  
-  slack:
-    domains:
-      - slack.com
-      - app.slack.com
-      - slack-edge.com
-      - slack-imgs.com
-    tags: [work, communication]
-  
-  reddit:
-    domains:
-      - reddit.com
-      - redd.it
-      - redditstatic.com
-      - redditmedia.com
+
+  mrmoneymustache.com:
+    tags: [finance]
+
+  washingtonpost.com:
+    tags: [news]
+
+  foxnews.com:
+    tags: [news]
+
+  linkedin.com:
+    tags: [social, professional]
+
+  simplifimoney.com:
+    tags: [finance]
+
+  nextdoor.com:
     tags: [social]
-  
-  youtube:
-    domains:
-      - youtube.com
-      - googlevideo.com
-      - ytimg.com
-      - ggpht.com
-      - youtube-nocookie.com
-    tags: [entertainment, streaming]
-  
+
+  news.ycombinator.com:
+    tags: [tech, news]
+
+  # Domain groups
   twitter:
     domains:
       - twitter.com
       - x.com
+      - api.x.com
       - t.co
       - twimg.com
-    tags: [social, news]
-  
+      - twitpic.com
+      - api.twitter.com
+      - mobile.twitter.com
+      - publish.twitter.com
+      - ads.twitter.com
+      - analytics.twitter.com
+      - cards.twitter.com
+      - cdn.twitter.com
+      - developer.twitter.com
+      - help.twitter.com
+      - pbs.twimg.com
+      - abs.twimg.com
+      - video.twimg.com
+      - vault.twimg.com
+      - upload.twitter.com
+      - stream.twitter.com
+      - tweetdeck.twitter.com
+      - ton.twitter.com
+      - si0.twimg.com
+      - si.twimg.com
+      - o.twimg.com
+      - ma.twimg.com
+      - syndication.twitter.com
+      - support.twitter.com
+      - blog.twitter.com
+      - business.twitter.com
+      - careers.twitter.com
+      - about.twitter.com
+      - legal.twitter.com
+      - status.twitter.com
+      - partners.twitter.com
+      - ads-api.twitter.com
+      - dev.twitter.com
+    tags: [social, distracting]
+
   facebook:
     domains:
       - facebook.com
-      - fbcdn.net
-      - facebook.net
-      - fbsbx.com
-      - fb.com
       - messenger.com
-    tags: [social]
-  
-  instagram:
-    domains:
-      - instagram.com
-      - cdninstagram.com
+      - m.me
       - fbcdn.net
-    tags: [social]
-  
-# Profiles (different unblocking strategies)
+      - business.facebook.com
+      - adsmanager.facebook.com
+    tags: [social, distracting]
+
+  slack:
+    domains:
+      - slack.com
+      - slack-edge.com
+      - cdn.slack.com
+      - api.slack.com
+    tags: [communication, work]
+
+  gmail:
+    domains:
+      - gmail.com
+      - www.gmail.com
+      - mail.google.com
+      - www.mail.google.com
+      - googlemail.com
+      - www.googlemail.com
+    tags: [communication, email]
+
 profiles:
-  # Default profile with wait times
+  # Standard unblock
   unblock:
-    description: "Standard unblock"
+    description: "Standard unblock with wait time"
     wait:
       base: 5              # 5 minute wait
       concurrent_penalty: 5 # +5 min per concurrent unblock
     duration: 30           # Stay unblocked for 30 minutes
+
+    # Tag-based wait time overrides
     tag_rules:
+      - tags: [ultra_distracting]
+        wait_override: 30  # 30 min wait for Netflix, etc.
       - tags: [work, communication]
-        wait_override: 1   # 1 min wait for Slack, Gmail
-      - tags: [streaming]
-        wait_override: 10  # 10 min wait for Netflix, YouTube
-  
-  # Quick access
+        wait_override: 1   # 1 min wait for Slack
+
+  # Quick check
   quick:
-    description: "Quick 5 minute access"
-    wait: 1
-    duration: 5
-    cooldown: 30  # Can only use once per 30 min
-  
+    description: "Quick 1-minute check"
+    wait: 0.5              # 30 seconds
+    duration: 1
+
   # Emergency bypass
   bypass:
-    description: "Emergency bypass"
+    description: "Emergency 5-minute unblock (once per hour)"
     wait: 0
     duration: 5
-    cooldown: 60  # Once per hour
-  
-  # Work mode - only work sites
+    cooldown: 60
+
+  # Work mode
   work:
-    description: "Work sites only"
-    tags: [work, productivity, development]
+    description: "Work mode - Slack only"
     wait: 0
-    duration: 120  # 2 hours
-    cooldown: 30
-  
-  # Email/Slack only
-  email:
-    description: "Email and Slack only"
-    only: [google, slack]
-    wait: 0
-    duration: 15
+    duration: 120          # 2 hours
+    only: [slack]
+
+  # News reading
+  news:
+    description: "News reading session"
+    wait: 5
+    duration: 20
+    tags: [news]
