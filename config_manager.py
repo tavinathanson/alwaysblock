@@ -49,14 +49,20 @@ class ConfigManager:
                 
         return list(set(domains))
     
-    def resolve_domains(self, targets: List[str]) -> List[str]:
-        """Resolve domain names/groups to actual domains"""
+    def resolve_domains(self, targets: List[str]) -> tuple[List[str], List[str]]:
+        """Resolve domain names/groups to actual domains
+
+        Returns:
+            (resolved_domains, invalid_targets) - lists of valid domains and invalid inputs
+        """
         domains = []
+        invalid = []
         domain_config = self._config_data.get('domains', {})
-        
+
         for target in targets:
             target = target.strip()
-            
+            matched = False
+
             # Direct match
             if target in domain_config:
                 config = domain_config[target]
@@ -66,8 +72,9 @@ class ConfigManager:
                 else:
                     # Individual domain
                     domains.append(target)
+                matched = True
                 continue
-                
+
             # Try with .com suffix
             if not target.endswith('.com') and (target + '.com') in domain_config:
                 target_com = target + '.com'
@@ -76,12 +83,27 @@ class ConfigManager:
                     domains.extend(config['domains'])
                 else:
                     domains.append(target_com)
+                matched = True
                 continue
-                
-            # Not in config - treat as raw domain
-            domains.append(target)
-            
-        return list(set(domains))
+
+            # Try other common TLDs
+            common_tlds = ['.org', '.net', '.io', '.dev']
+            for tld in common_tlds:
+                if not any(target.endswith(t) for t in common_tlds + ['.com']) and (target + tld) in domain_config:
+                    target_with_tld = target + tld
+                    config = domain_config[target_with_tld]
+                    if isinstance(config, dict) and 'domains' in config:
+                        domains.extend(config['domains'])
+                    else:
+                        domains.append(target_with_tld)
+                    matched = True
+                    break
+
+            if not matched:
+                # Not found in config
+                invalid.append(target)
+
+        return (list(set(domains)), invalid)
     
     def is_domain_blocked(self, domain: str) -> bool:
         """Check if a domain is currently blocked based on configuration and active sessions"""

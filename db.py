@@ -79,23 +79,44 @@ class Database:
         finally:
             conn.close()
     
-    def create_session(self, profile: str, domains: List[str], 
+    def create_session(self, profile: str, domains: List[str],
                       wait_minutes: int, duration_minutes: int) -> int:
-        """Create a new session"""
+        """Create a new session, queuing it after any existing sessions for the same domains
+
+        If any of the domains are already in an active or pending session, this new session
+        will be queued to start after the latest existing session ends, plus the configured
+        wait period. This ensures consistent spacing between consecutive unblocks of the
+        same domain.
+        """
         now = datetime.now()
-        start_at = now + timedelta(minutes=wait_minutes)
+
+        # Check if any of these domains are already in active/pending sessions
+        latest_end = self.get_latest_end_time_for_domains(domains)
+
+        if latest_end is not None and latest_end > now:
+            # Queue this session after the existing one
+            # Start time = latest existing session end + wait period
+            start_at = latest_end + timedelta(minutes=wait_minutes)
+            logger.info(f"Queueing session for {domains}: existing session ends at {latest_end}, "
+                       f"new session starts at {start_at} (after {wait_minutes}min wait)")
+        else:
+            # No overlapping sessions, schedule as normal
+            start_at = now + timedelta(minutes=wait_minutes)
+
         end_at = start_at + timedelta(minutes=duration_minutes)
-        
-        status = 'active' if wait_minutes == 0 else 'pending'
-        
+
+        # Session is active if it should start immediately (start_at <= now)
+        # This handles the case where wait_minutes == 0 and no queue
+        status = 'active' if start_at <= now else 'pending'
+
         with self._get_conn() as conn:
             cursor = conn.execute("""
-                INSERT INTO sessions 
-                (profile, domains, status, wait_minutes, duration_minutes, 
+                INSERT INTO sessions
+                (profile, domains, status, wait_minutes, duration_minutes,
                  created_at, start_at, end_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                profile, 
+                profile,
                 json.dumps(domains),
                 status,
                 wait_minutes,
@@ -105,10 +126,10 @@ class Database:
                 end_at
             ))
             conn.commit()
-            
+
             session_id = cursor.lastrowid
             logger.info(f"Created session {session_id} for profile '{profile}' with {len(domains)} domains")
-            
+
             return session_id
     
     def get_active_sessions(self) -> List[Dict[str, Any]]:
@@ -261,12 +282,44 @@ class Database:
     def get_all_domains_from_sessions(self) -> List[str]:
         """Get all unique domains from active sessions"""
         domains = set()
-        
+
         for session in self.get_active_sessions():
             domains.update(session['domains'])
-        
+
         return list(domains)
-    
+
+    def get_latest_end_time_for_domains(self, domains: List[str]) -> Optional[datetime]:
+        """Get the latest end_at time for any session containing any of the specified domains
+
+        This is used to queue unblock requests - if any of the domains are already
+        in an active or pending session, we want to queue the new request after
+        the latest existing session ends.
+        """
+        if not domains:
+            return None
+
+        with self._get_conn() as conn:
+            # Get all sessions that might overlap with these domains
+            rows = conn.execute("""
+                SELECT domains, end_at FROM sessions
+                WHERE status IN ('pending', 'active')
+                ORDER BY end_at DESC
+            """).fetchall()
+
+            latest_end = None
+            request_domains = set(domains)
+
+            for row in rows:
+                session_domains = set(json.loads(row['domains']))
+
+                # Check if there's any overlap between request domains and session domains
+                if request_domains & session_domains:
+                    end_at = row['end_at']
+                    if latest_end is None or end_at > latest_end:
+                        latest_end = end_at
+
+            return latest_end
+
     def _row_to_dict(self, row) -> Dict[str, Any]:
         """Convert database row to dictionary"""
         d = dict(row)

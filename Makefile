@@ -1,4 +1,4 @@
-.PHONY: install start stop restart uninstall status help
+.PHONY: install start stop restart uninstall status test help
 
 # Colors for output
 GREEN=\033[0;32m
@@ -15,6 +15,7 @@ help:
 	@echo "  make restart    - Stop and start all services"
 	@echo "  make uninstall  - Completely uninstall and stop everything"
 	@echo "  make status     - Show current status"
+	@echo "  make test       - Run test suite"
 	@echo ""
 
 install:
@@ -70,3 +71,13 @@ uninstall:
 
 status:
 	@alwaysblock status
+
+test:
+	@echo "$(GREEN)Running AlwaysBlock Test Suite...$(NC)"
+	@echo ""
+	@if [ ! -d "venv" ]; then \
+		echo "$(YELLOW)Creating virtual environment...$(NC)"; \
+		python3 -m venv venv; \
+		. venv/bin/activate && pip install -r requirements.txt -q; \
+	fi
+	@. venv/bin/activate && pytest

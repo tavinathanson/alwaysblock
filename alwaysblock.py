@@ -342,17 +342,31 @@ class AlwaysBlock:
             print(f"Error: Invalid profile '{profile_name}'")
             sys.exit(1)
 
+        # Resolve targets to domains
+        resolved, invalid = self.config_manager.resolve_domains(targets)
+
+        # Show error for invalid targets
+        if invalid:
+            print(f"Error: The following targets are not in your configuration:")
+            for target in invalid:
+                print(f"  - {target}")
+            print(f"\nValid targets are domain names or groups from your config.yaml")
+            print(f"Hint: You can try just the domain name (e.g., 'youtube' instead of 'youtube.com')")
+            sys.exit(1)
+
+        if not resolved:
+            print("Error: No valid domains to unblock")
+            sys.exit(1)
+
         # Check cooldown
         timing = self.config_manager.calculate_timing(profile_name, targets)
         if not self.db.check_cooldown(profile_name, timing['cooldown']):
             print(f"Error: Profile '{profile_name}' is on cooldown")
             sys.exit(1)
 
-        # Resolve targets to domains
-        resolved = self.config_manager.resolve_domains(targets)
-        if not resolved:
-            print("Error: No valid domains to unblock")
-            sys.exit(1)
+        # Check if domains are already queued/active
+        latest_end = self.db.get_latest_end_time_for_domains(resolved)
+        is_queued = latest_end is not None and latest_end > datetime.now()
 
         # Create session
         session_id = self.db.create_session(
@@ -371,7 +385,14 @@ class AlwaysBlock:
         print(f"Unblock session created: {session_id}")
         print(f"Profile: {profile_name}")
         print(f"Domains: {', '.join(resolved)}")
-        print(f"Wait time: {timing['wait']} minutes")
+
+        if is_queued:
+            wait_after_queue = (latest_end - datetime.now()).total_seconds() / 60 + timing['wait']
+            print(f"⏱️  Queued behind existing session")
+            print(f"Wait time: {int(wait_after_queue)} minutes (existing session + {timing['wait']}min wait)")
+        else:
+            print(f"Wait time: {timing['wait']} minutes")
+
         print(f"Duration: {timing['duration']} minutes")
 
     def block_all(self):
