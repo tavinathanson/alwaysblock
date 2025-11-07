@@ -35,9 +35,9 @@ class AlwaysBlock:
         self.session_manager_pid_file = Path('/tmp/alwaysblock_session_manager.pid')
 
         # Initialize components
-        self.config_manager = ConfigManager(str(self.config_path))
-        self.config_manager.load()  # Load the config
         self.db = Database(self.db_path)
+        self.config_manager = ConfigManager(str(self.config_path), db=self.db)
+        self.config_manager.load()  # Load the config
         self.system_proxy = SystemProxy(proxy_port=8905)
 
     def _write_domains_for_proxy(self):
