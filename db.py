@@ -99,12 +99,19 @@ class Database:
         now = datetime.now()
 
         # Check if any of these domains are already in active/pending sessions
-        latest_end = self.get_latest_end_time_for_domains(domains)
+        domain_overlap_end = self.get_latest_end_time_for_domains(domains)
 
-        # Also consider the explicit queue_after time if provided
-        if queue_after is not None and queue_after > now:
-            if latest_end is None or queue_after > latest_end:
-                latest_end = queue_after
+        # Determine which end time to use:
+        # - If domains overlap with existing sessions, ALWAYS use that (domain-based queueing takes priority)
+        # - Otherwise, use queue_after if provided (for serial execution within a single command)
+        if domain_overlap_end is not None and domain_overlap_end > now:
+            # Domain overlap takes priority - queue after the existing session with these domains
+            latest_end = domain_overlap_end
+        elif queue_after is not None and queue_after > now:
+            # No domain overlap, but we want serial execution
+            latest_end = queue_after
+        else:
+            latest_end = None
 
         if latest_end is not None and latest_end > now:
             # Queue this session after the existing one
