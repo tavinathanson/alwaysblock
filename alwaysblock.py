@@ -32,6 +32,7 @@ class AlwaysBlock:
 
         # PID file for proxy daemon (use /tmp so both sudo and non-sudo can access)
         self.pid_file = Path('/tmp/alwaysblock_proxy.pid')
+        self.session_manager_pid_file = Path('/tmp/alwaysblock_session_manager.pid')
 
         # Initialize components
         self.config_manager = ConfigManager(str(self.config_path))
@@ -175,6 +176,23 @@ class AlwaysBlock:
                 pass
             return False
 
+    def is_session_manager_running(self):
+        """Check if session manager daemon is running"""
+        if not self.session_manager_pid_file.exists():
+            return False
+
+        try:
+            with open(self.session_manager_pid_file, 'r') as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            return True
+        except (ValueError, ProcessLookupError, OSError, PermissionError):
+            try:
+                self.session_manager_pid_file.unlink(missing_ok=True)
+            except:
+                pass
+            return False
+
     def start_proxy(self):
         """Start the transparent proxy daemon"""
         if self.is_proxy_running():
@@ -242,9 +260,41 @@ class AlwaysBlock:
                     if lines:
                         print("\nLast error:")
                         print(''.join(lines[-10:]))
+            return
+
+        # Start session manager daemon
+        if not self.is_session_manager_running():
+            session_manager_script = Path(__file__).parent / 'session_manager.py'
+            sm_log_file = self.session_manager_pid_file.parent / 'session_manager.log'
+
+            with open(sm_log_file, 'a') as log:
+                sm_process = subprocess.Popen(
+                    [sys.executable, str(session_manager_script)],
+                    stdout=log,
+                    stderr=log,
+                    start_new_session=True
+                )
+
+            with open(self.session_manager_pid_file, 'w') as f:
+                f.write(str(sm_process.pid))
+            os.chmod(self.session_manager_pid_file, 0o666)
+
+            print(f"✅ Session manager started (PID: {sm_process.pid})")
 
     def stop_proxy(self):
         """Stop the transparent proxy daemon"""
+        # Stop session manager first
+        if self.session_manager_pid_file.exists():
+            try:
+                with open(self.session_manager_pid_file, 'r') as f:
+                    pid = int(f.read().strip())
+                os.kill(pid, signal.SIGTERM)
+                self.session_manager_pid_file.unlink(missing_ok=True)
+                print("✅ Session manager stopped")
+            except:
+                self.session_manager_pid_file.unlink(missing_ok=True)
+
+        # Stop proxy
         if not self.pid_file.exists():
             print("Proxy is not running")
             return

@@ -8,6 +8,7 @@ import select
 import threading
 import logging
 import json
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class HTTPProxy:
         self.blocked_domains = set()
         self.server_socket = None
         self.running = False
+        self.last_mtime = 0
 
     def load_blocked_domains(self):
         """Load blocked domains from JSON file"""
@@ -30,6 +32,7 @@ class HTTPProxy:
                 with open(self.blocked_domains_file, 'r') as f:
                     data = json.load(f)
                     self.blocked_domains = set(data.get('domains', []))
+                    self.last_mtime = self.blocked_domains_file.stat().st_mtime
                     logger.info(f"Loaded {len(self.blocked_domains)} blocked domains")
             else:
                 logger.warning(f"Blocked domains file not found: {self.blocked_domains_file}")
@@ -37,6 +40,16 @@ class HTTPProxy:
         except Exception as e:
             logger.error(f"Failed to load blocked domains: {e}")
             self.blocked_domains = set()
+
+    def check_and_reload(self):
+        """Check if domains file changed and reload if needed"""
+        try:
+            if self.blocked_domains_file.exists():
+                mtime = self.blocked_domains_file.stat().st_mtime
+                if mtime > self.last_mtime:
+                    self.load_blocked_domains()
+        except Exception as e:
+            logger.debug(f"Error checking file mtime: {e}")
 
     def should_block_domain(self, hostname):
         """Check if domain should be blocked (with subdomain matching)"""
@@ -84,9 +97,6 @@ class HTTPProxy:
 
             method = parts[0]
             url = parts[1]
-
-            # Reload blocked domains
-            self.load_blocked_domains()
 
             # Extract hostname
             if method == 'CONNECT':
@@ -255,6 +265,15 @@ class HTTPProxy:
             self.running = True
             logger.info(f"🚀 HTTP proxy started on 127.0.0.1:{self.port}")
             logger.info(f"📋 Blocking {len(self.blocked_domains)} domains")
+
+            # Start background thread to check for file changes
+            def reload_checker():
+                while self.running:
+                    time.sleep(5)
+                    self.check_and_reload()
+
+            checker_thread = threading.Thread(target=reload_checker, daemon=True)
+            checker_thread.start()
 
             while self.running:
                 try:
