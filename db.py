@@ -80,18 +80,31 @@ class Database:
             conn.close()
     
     def create_session(self, profile: str, domains: List[str],
-                      wait_minutes: int, duration_minutes: int) -> int:
+                      wait_minutes: int, duration_minutes: int,
+                      queue_after: Optional[datetime] = None) -> int:
         """Create a new session, queuing it after any existing sessions for the same domains
 
         If any of the domains are already in an active or pending session, this new session
         will be queued to start after the latest existing session ends, plus the configured
         wait period. This ensures consistent spacing between consecutive unblocks of the
         same domain.
+
+        Args:
+            profile: Profile name
+            domains: List of domains to unblock
+            wait_minutes: Minutes to wait before starting
+            duration_minutes: Minutes the session lasts
+            queue_after: Optional datetime to force queueing after this time, regardless of domain overlap
         """
         now = datetime.now()
 
         # Check if any of these domains are already in active/pending sessions
         latest_end = self.get_latest_end_time_for_domains(domains)
+
+        # Also consider the explicit queue_after time if provided
+        if queue_after is not None and queue_after > now:
+            if latest_end is None or queue_after > latest_end:
+                latest_end = queue_after
 
         if latest_end is not None and latest_end > now:
             # Queue this session after the existing one

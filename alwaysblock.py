@@ -334,7 +334,12 @@ class AlwaysBlock:
         self.system_proxy.disable_proxy()
 
     def unblock(self, targets, profile_name=None):
-        """Unblock domains with timing rules"""
+        """Unblock domains with timing rules
+
+        Each target creates a separate session that queues sequentially.
+        For example: 'unblock gmail slack facebook' creates 3 sessions,
+        each waiting for the previous one to complete before starting.
+        """
         if not profile_name:
             profile_name = self.config_manager.get_default_profile()
 
@@ -342,58 +347,89 @@ class AlwaysBlock:
             print(f"Error: Invalid profile '{profile_name}'")
             sys.exit(1)
 
-        # Resolve targets to domains
-        resolved, invalid = self.config_manager.resolve_domains(targets)
+        # Validate all targets first
+        all_resolved = []
+        all_invalid = []
+
+        for target in targets:
+            resolved, invalid = self.config_manager.resolve_domains([target])
+            if resolved:
+                all_resolved.append((target, resolved))
+            if invalid:
+                all_invalid.extend(invalid)
 
         # Show error for invalid targets
-        if invalid:
+        if all_invalid:
             print(f"Error: The following targets are not in your configuration:")
-            for target in invalid:
+            for target in all_invalid:
                 print(f"  - {target}")
             print(f"\nValid targets are domain names or groups from your config.yaml")
             print(f"Hint: You can try just the domain name (e.g., 'youtube' instead of 'youtube.com')")
             sys.exit(1)
 
-        if not resolved:
+        if not all_resolved:
             print("Error: No valid domains to unblock")
             sys.exit(1)
 
-        # Check cooldown
-        timing = self.config_manager.calculate_timing(profile_name, targets)
+        # Check cooldown once at the start
+        # Use the first target for timing calculation (they should all use same profile anyway)
+        timing = self.config_manager.calculate_timing(profile_name, [targets[0]])
         if not self.db.check_cooldown(profile_name, timing['cooldown']):
             print(f"Error: Profile '{profile_name}' is on cooldown")
             sys.exit(1)
 
-        # Check if domains are already queued/active
-        latest_end = self.db.get_latest_end_time_for_domains(resolved)
-        is_queued = latest_end is not None and latest_end > datetime.now()
-
-        # Create session
-        session_id = self.db.create_session(
-            profile=profile_name,
-            domains=resolved,
-            wait_minutes=timing['wait'],
-            duration_minutes=timing['duration']
-        )
-
-        # Update cooldown
+        # Update cooldown once
         self.db.update_cooldown(profile_name)
+
+        # Create separate sessions for each target, queued serially
+        # Each session queues after the previous one, ensuring serial execution
+        session_ids = []
+        last_end_time = None
+        print(f"Creating {len(all_resolved)} unblock session(s)...\n")
+
+        for target, domains in all_resolved:
+            # Calculate timing for this specific target
+            timing = self.config_manager.calculate_timing(profile_name, [target])
+
+            # Create session, queuing after the last one we created
+            # (or after existing sessions for the first one)
+            session_id = self.db.create_session(
+                profile=profile_name,
+                domains=domains,
+                wait_minutes=timing['wait'],
+                duration_minutes=timing['duration'],
+                queue_after=last_end_time
+            )
+
+            session_ids.append(session_id)
+
+            # Get the session we just created to track its end time for the next iteration
+            sessions = self.db.get_pending_sessions() + self.db.get_active_sessions()
+            session = next(s for s in sessions if s['id'] == session_id)
+            last_end_time = session['end_at']
+
+            # Get session details to show timing
+            sessions = self.db.get_pending_sessions() + self.db.get_active_sessions()
+            session = next(s for s in sessions if s['id'] == session_id)
+
+            now = datetime.now()
+            wait_time = (session['start_at'] - now).total_seconds() / 60
+
+            print(f"Session {session_id}: {target}")
+            print(f"  Domains: {', '.join(domains)}")
+            print(f"  Wait: {int(wait_time)} minutes")
+            print(f"  Duration: {timing['duration']} minutes")
+            print(f"  Start at: {session['start_at'].strftime('%H:%M:%S')}")
+            print(f"  End at: {session['end_at'].strftime('%H:%M:%S')}")
+            print()
 
         # Update JSON for proxy
         self._write_domains_for_proxy()
 
-        print(f"Unblock session created: {session_id}")
-        print(f"Profile: {profile_name}")
-        print(f"Domains: {', '.join(resolved)}")
-
-        if is_queued:
-            wait_after_queue = (latest_end - datetime.now()).total_seconds() / 60 + timing['wait']
-            print(f"⏱️  Queued behind existing session")
-            print(f"Wait time: {int(wait_after_queue)} minutes (existing session + {timing['wait']}min wait)")
+        if len(session_ids) > 1:
+            print(f"✅ Created {len(session_ids)} queued sessions")
         else:
-            print(f"Wait time: {timing['wait']} minutes")
-
-        print(f"Duration: {timing['duration']} minutes")
+            print(f"✅ Created 1 session")
 
     def block_all(self):
         """Block all domains immediately"""

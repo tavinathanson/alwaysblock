@@ -147,3 +147,55 @@ def test_multiple_queued_sessions(db):
         gap_minutes = (next_session['start_at'] - current['end_at']).total_seconds() / 60
         assert abs(gap_minutes - 1.0) < 0.01, \
             f"Gap between session {i} and {i+1} should be 1 minute, got {gap_minutes}"
+
+
+def test_serial_unblock_multiple_targets(db):
+    """Test that unblocking multiple different domains with queue_after creates serial sessions
+
+    This simulates: alwaysblock unblock gmail slack facebook
+    Each should create a separate session that queues after the previous one,
+    even though they have different domains (using the queue_after parameter).
+    """
+    # Create sessions for different domains serially (as if user ran: unblock gmail slack facebook)
+    targets = [
+        ['gmail.com'],
+        ['slack.com'],
+        ['facebook.com']
+    ]
+
+    session_ids = []
+    last_end_time = None
+
+    for domains in targets:
+        session_id = db.create_session(
+            profile='test',
+            domains=domains,
+            wait_minutes=1,
+            duration_minutes=5,
+            queue_after=last_end_time  # Force serial queueing
+        )
+        session_ids.append(session_id)
+
+        # Get the session we just created to track its end time
+        sessions = db.get_pending_sessions() + db.get_active_sessions()
+        session = next(s for s in sessions if s['id'] == session_id)
+        last_end_time = session['end_at']
+
+    # Get all sessions
+    sessions = db.get_pending_sessions()
+    assert len(sessions) == 3, "Should have 3 pending sessions"
+
+    # Sort by start time
+    sessions.sort(key=lambda s: s['start_at'])
+
+    # Verify they queue sequentially (each starts after previous ends + wait time)
+    for i in range(len(sessions) - 1):
+        current = sessions[i]
+        next_session = sessions[i + 1]
+
+        assert next_session['start_at'] > current['end_at'], \
+            f"Session {i+1} should start after session {i} ends"
+
+        gap_minutes = (next_session['start_at'] - current['end_at']).total_seconds() / 60
+        assert abs(gap_minutes - 1.0) < 0.01, \
+            f"Gap between session {i} and {i+1} should be 1 minute, got {gap_minutes}"
