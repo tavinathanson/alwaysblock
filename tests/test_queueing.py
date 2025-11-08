@@ -20,7 +20,7 @@ def db():
 
 
 def test_same_domain_queues_properly(db):
-    """Test that consecutive unblocks of the same domain queue sequentially"""
+    """Test that consecutive unblocks of the same domain queue using waiting_for_domain status"""
     # Create first session
     session1 = db.create_session(
         profile='test',
@@ -29,7 +29,12 @@ def test_same_domain_queues_properly(db):
         duration_minutes=5
     )
 
-    # Create second session for same domain
+    # First session should be pending (domain is free)
+    pending_sessions = db.get_pending_sessions()
+    assert len(pending_sessions) == 1, "First session should be pending"
+    s1 = pending_sessions[0]
+
+    # Create second session for same domain (should be waiting_for_domain)
     session2 = db.create_session(
         profile='test',
         domains=['youtube.com'],
@@ -37,19 +42,13 @@ def test_same_domain_queues_properly(db):
         duration_minutes=5
     )
 
-    # Get both sessions
-    sessions = db.get_pending_sessions()
-    assert len(sessions) == 2, "Should have 2 pending sessions"
-
-    s1 = next(s for s in sessions if s['id'] == session1)
-    s2 = next(s for s in sessions if s['id'] == session2)
-
-    # Verify session 2 starts after session 1 ends
-    assert s2['start_at'] > s1['end_at'], "Session 2 should start after session 1 ends"
-
-    # Verify the gap equals the wait period (1 minute)
-    gap_minutes = (s2['start_at'] - s1['end_at']).total_seconds() / 60
-    assert abs(gap_minutes - 1.0) < 0.01, f"Gap should be 1 minute, got {gap_minutes}"
+    # Second session should be waiting (domain is in use)
+    waiting_sessions = db.get_waiting_sessions()
+    assert len(waiting_sessions) == 1, "Second session should be waiting_for_domain"
+    s2 = waiting_sessions[0]
+    assert s2['id'] == session2, "Waiting session should be session 2"
+    assert s2['start_at'] is None, "Waiting session should not have start_at yet"
+    assert s2['end_at'] is None, "Waiting session should not have end_at yet"
 
 
 def test_different_domains_dont_queue(db):
@@ -80,7 +79,7 @@ def test_different_domains_dont_queue(db):
 
 
 def test_overlapping_domains_queue(db):
-    """Test that sessions with any overlapping domains queue properly"""
+    """Test that sessions with any overlapping domains use waiting_for_domain"""
     # Create session for youtube only
     session1 = db.create_session(
         profile='test',
@@ -89,7 +88,10 @@ def test_overlapping_domains_queue(db):
         duration_minutes=5
     )
 
-    # Create another session for youtube (to extend the queue)
+    # First session should be pending
+    assert len(db.get_pending_sessions()) == 1, "First session should be pending"
+
+    # Create another session for youtube (should be waiting)
     session2 = db.create_session(
         profile='test',
         domains=['youtube.com'],
@@ -105,19 +107,17 @@ def test_overlapping_domains_queue(db):
         duration_minutes=5
     )
 
-    sessions = db.get_pending_sessions()
-    s2 = next(s for s in sessions if s['id'] == session2)
-    s3 = next(s for s in sessions if s['id'] == session3)
+    # Both session2 and session3 should be waiting (youtube is in use)
+    waiting_sessions = db.get_waiting_sessions()
+    assert len(waiting_sessions) == 2, "Sessions 2 and 3 should be waiting_for_domain"
 
-    # Session 3 should start after session 2 ends (because of youtube overlap)
-    assert s3['start_at'] > s2['end_at'], "Session with overlapping domain should queue"
-
-    gap_minutes = (s3['start_at'] - s2['end_at']).total_seconds() / 60
-    assert abs(gap_minutes - 1.0) < 0.01, f"Gap should be 1 minute, got {gap_minutes}"
+    waiting_ids = [s['id'] for s in waiting_sessions]
+    assert session2 in waiting_ids, "Session 2 should be waiting"
+    assert session3 in waiting_ids, "Session 3 should be waiting"
 
 
 def test_multiple_queued_sessions(db):
-    """Test that multiple sessions for same domain all queue properly"""
+    """Test that multiple sessions for same domain use waiting_for_domain"""
     sessions_created = []
 
     # Create 3 sessions for the same domain
@@ -130,23 +130,20 @@ def test_multiple_queued_sessions(db):
         )
         sessions_created.append(session_id)
 
-    sessions = db.get_pending_sessions()
-    assert len(sessions) == 3, "Should have 3 pending sessions"
+    # First session should be pending, others should be waiting
+    pending_sessions = db.get_pending_sessions()
+    waiting_sessions = db.get_waiting_sessions()
 
-    # Sort by start time
-    sessions.sort(key=lambda s: s['start_at'])
+    assert len(pending_sessions) == 1, "Should have 1 pending session (first one)"
+    assert len(waiting_sessions) == 2, "Should have 2 waiting sessions (second and third)"
 
-    # Verify each session starts after the previous one ends
-    for i in range(len(sessions) - 1):
-        current = sessions[i]
-        next_session = sessions[i + 1]
+    # Verify first session is the first one created
+    assert pending_sessions[0]['id'] == sessions_created[0], "First session should be pending"
 
-        assert next_session['start_at'] > current['end_at'], \
-            f"Session {i+1} should start after session {i} ends"
-
-        gap_minutes = (next_session['start_at'] - current['end_at']).total_seconds() / 60
-        assert abs(gap_minutes - 1.0) < 0.01, \
-            f"Gap between session {i} and {i+1} should be 1 minute, got {gap_minutes}"
+    # Verify waiting sessions are the second and third
+    waiting_ids = [s['id'] for s in waiting_sessions]
+    assert sessions_created[1] in waiting_ids, "Second session should be waiting"
+    assert sessions_created[2] in waiting_ids, "Third session should be waiting"
 
 
 def test_independent_unblock_multiple_targets(db):
@@ -190,11 +187,11 @@ def test_independent_unblock_multiple_targets(db):
 
 
 def test_same_domain_queues_when_active(db):
-    """Test that domain-based queueing works correctly
+    """Test that domain-based queueing works correctly with waiting_for_domain
 
     Scenario: slack is currently active, user runs 'unblock instagram slack'
     - Instagram should start independently (no overlap, no queue)
-    - Slack should queue after the EXISTING slack session
+    - Slack should be waiting_for_domain (slack is in use)
     """
     # Create an active slack session
     slack_session_1 = db.create_session(
@@ -204,12 +201,13 @@ def test_same_domain_queues_when_active(db):
         duration_minutes=30
     )
 
-    # Get the first slack session to know when it ends
-    sessions = db.get_active_sessions()
-    slack_1 = next(s for s in sessions if s['id'] == slack_session_1)
+    # Get the first slack session
+    active_sessions = db.get_active_sessions()
+    assert len(active_sessions) == 1, "Should have 1 active session"
+    slack_1 = active_sessions[0]
 
     # Now simulate: unblock instagram slack
-    # Create instagram session (should be independent)
+    # Create instagram session (should be pending - different domain)
     instagram_session = db.create_session(
         profile='test',
         domains=['instagram.com'],
@@ -217,7 +215,7 @@ def test_same_domain_queues_when_active(db):
         duration_minutes=30
     )
 
-    # Create second slack session (should queue after first slack)
+    # Create second slack session (should be waiting - slack is in use)
     slack_session_2 = db.create_session(
         profile='test',
         domains=['slack.com'],
@@ -225,22 +223,16 @@ def test_same_domain_queues_when_active(db):
         duration_minutes=30
     )
 
-    # Get all sessions
-    all_sessions = db.get_pending_sessions() + db.get_active_sessions()
-    instagram = next(s for s in all_sessions if s['id'] == instagram_session)
-    slack_2 = next(s for s in all_sessions if s['id'] == slack_session_2)
+    # Verify: instagram should be pending (independent domain)
+    pending_sessions = db.get_pending_sessions()
+    assert len(pending_sessions) == 1, "Instagram should be pending"
+    instagram = pending_sessions[0]
+    assert instagram['id'] == instagram_session, "Pending session should be instagram"
 
-    # Verify: slack_2 should queue after slack_1
-    assert slack_2['start_at'] > slack_1['end_at'], \
-        "Second slack should queue after first slack"
-
-    # The gap should be the wait time (1 minute)
-    gap_from_slack1 = (slack_2['start_at'] - slack_1['end_at']).total_seconds() / 60
-    assert abs(gap_from_slack1 - 1.0) < 0.01, \
-        f"Slack 2 should start 1 min after slack 1 ends, got {gap_from_slack1} min"
-
-    # Verify: instagram should start independently (not queued)
-    # It should start at: now + wait_minutes (1 minute)
-    time_from_now = (instagram['start_at'] - datetime.now()).total_seconds() / 60
-    assert abs(time_from_now - 1.0) < 0.1, \
-        f"Instagram should start in ~1 minute (independent), got {time_from_now} min"
+    # Verify: slack_2 should be waiting (slack domain is in use)
+    waiting_sessions = db.get_waiting_sessions()
+    assert len(waiting_sessions) == 1, "Slack 2 should be waiting_for_domain"
+    slack_2 = waiting_sessions[0]
+    assert slack_2['id'] == slack_session_2, "Waiting session should be slack 2"
+    assert slack_2['start_at'] is None, "Waiting session should not have start_at yet"
+    assert slack_2['end_at'] is None, "Waiting session should not have end_at yet"
