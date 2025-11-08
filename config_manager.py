@@ -155,7 +155,7 @@ class ConfigManager:
     def calculate_timing(self, profile_name: str, targets: List[str]) -> Dict[str, Any]:
         """Calculate wait and duration for a profile with targets"""
         profile = self.profiles.get(profile_name, {})
-        
+
         # Get all tags from targets
         all_tags = set()
         domain_config = self._config_data.get('domains', {})
@@ -164,24 +164,31 @@ class ConfigManager:
                 config = domain_config[target]
                 if isinstance(config, dict) and 'tags' in config:
                     all_tags.update(config['tags'])
-        
+
         # Calculate base wait time
         wait = 5  # Default
+        explanation_parts = []
+
         if isinstance(profile.get('wait'), (int, float)):
             wait = profile['wait']
+            explanation_parts.append(f"base {wait} min")
         elif isinstance(profile.get('wait'), dict):
             wait_config = profile['wait']
             base = wait_config.get('base', 5)
-            
+            explanation_parts.append(f"base {base} min")
+
             # Add concurrent penalty if DB available
             concurrent_penalty = 0
             if self.db and 'concurrent_penalty' in wait_config:
                 concurrent_count = self.db.count_concurrent_pending(profile_name)
                 concurrent_penalty = wait_config['concurrent_penalty'] * concurrent_count
-            
+                if concurrent_penalty > 0:
+                    explanation_parts.append(f"+{concurrent_penalty} min ({concurrent_count} pending × {wait_config['concurrent_penalty']} min penalty)")
+
             wait = base + concurrent_penalty
-        
+
         # Check for tag-based overrides
+        tag_override_applied = False
         if 'tag_rules' in profile:
             for rule in profile['tag_rules']:
                 if 'tags' in rule:
@@ -189,15 +196,21 @@ class ConfigManager:
                     if any(tag in all_tags for tag in rule['tags']):
                         if 'wait_override' in rule:
                             wait = rule['wait_override']
+                            matching_tags = [tag for tag in rule['tags'] if tag in all_tags]
+                            explanation_parts = [f"{wait} min (override for tags: {', '.join(matching_tags)})"]
+                            tag_override_applied = True
                             break
-        
+
         duration = profile.get('duration', 30)
         cooldown = profile.get('cooldown', 0)
-        
+
+        explanation = " ".join(explanation_parts) if explanation_parts else f"{wait} min"
+
         return {
             'wait': wait,
             'duration': duration,
-            'cooldown': cooldown
+            'cooldown': cooldown,
+            'explanation': explanation
         }
     
     @property

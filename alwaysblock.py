@@ -85,11 +85,14 @@ class AlwaysBlock:
 
     def _process_expired_sessions(self):
         """Check for and process expired sessions"""
+        # Expire active sessions that are done (do this first!)
+        self.db.expire_sessions()
+
+        # Activate waiting sessions whose domains are now free
+        self.db.activate_waiting_sessions()
+
         # Activate pending sessions that are ready
         self.db.activate_pending_sessions()
-
-        # Expire active sessions that are done
-        self.db.expire_sessions()
 
     def status(self):
         """Show current status"""
@@ -101,6 +104,7 @@ class AlwaysBlock:
 
         active_sessions = self.db.get_active_sessions()
         pending_sessions = self.db.get_pending_sessions()
+        waiting_sessions = self.db.get_waiting_sessions()
         all_configured = self.config_manager.get_all_configured_domains()
 
         # Collect unblocked domains
@@ -150,6 +154,13 @@ class AlwaysBlock:
                 wait_time = (start_at - datetime.now()).total_seconds()
                 minutes = int(wait_time / 60)
                 print(f"  • {domains_str} - {minutes} minutes until accessible")
+            print(f"")
+
+        if waiting_sessions:
+            print(f"Queued (waiting for domain to be free) ({len(waiting_sessions)}):")
+            for session in waiting_sessions:
+                domains_str = ', '.join(session['domains'])
+                print(f"  • {domains_str} - timing will be calculated when domain becomes available")
             print(f"")
 
     def is_proxy_running(self):
@@ -381,46 +392,46 @@ class AlwaysBlock:
         # Update cooldown once
         self.db.update_cooldown(profile_name)
 
-        # Create separate sessions for each target, queued serially
-        # Each session queues after the previous one, ensuring serial execution
+        # Create separate sessions for each target
+        # Each session is independent and only queues if the same domain is already active/pending
         session_ids = []
-        last_end_time = None
         print(f"Creating {len(all_resolved)} unblock session(s)...\n")
 
         for target, domains in all_resolved:
             # Calculate timing for this specific target
             timing = self.config_manager.calculate_timing(profile_name, [target])
 
-            # Create session, queuing after the last one we created
-            # (or after existing sessions for the first one)
+            # Create session - it will automatically queue if these domains are already active/pending
             session_id = self.db.create_session(
                 profile=profile_name,
                 domains=domains,
                 wait_minutes=timing['wait'],
-                duration_minutes=timing['duration'],
-                queue_after=last_end_time
+                duration_minutes=timing['duration']
             )
 
             session_ids.append(session_id)
 
-            # Get the session we just created to track its end time for the next iteration
-            sessions = self.db.get_pending_sessions() + self.db.get_active_sessions()
-            session = next(s for s in sessions if s['id'] == session_id)
-            last_end_time = session['end_at']
-
             # Get session details to show timing
-            sessions = self.db.get_pending_sessions() + self.db.get_active_sessions()
-            session = next(s for s in sessions if s['id'] == session_id)
-
-            now = datetime.now()
-            wait_time = (session['start_at'] - now).total_seconds() / 60
+            all_sessions = self.db.get_pending_sessions() + self.db.get_active_sessions() + self.db.get_waiting_sessions()
+            session = next(s for s in all_sessions if s['id'] == session_id)
 
             print(f"Session {session_id}: {target}")
             print(f"  Domains: {', '.join(domains)}")
-            print(f"  Wait: {int(wait_time)} minutes")
-            print(f"  Duration: {timing['duration']} minutes")
-            print(f"  Start at: {session['start_at'].strftime('%H:%M:%S')}")
-            print(f"  End at: {session['end_at'].strftime('%H:%M:%S')}")
+
+            if session['status'] == 'waiting_for_domain':
+                # Waiting sessions don't have start/end times yet
+                print(f"  Status: Queued (waiting for domain to become available)")
+                print(f"  Duration: {timing['duration']} minutes")
+                print(f"  Note: Wait time will be calculated when domain becomes free")
+            else:
+                # Pending/active sessions have calculated times
+                now = datetime.now()
+                wait_time = (session['start_at'] - now).total_seconds() / 60
+
+                print(f"  Wait: {int(wait_time)} minutes ({timing['explanation']})")
+                print(f"  Duration: {timing['duration']} minutes")
+                print(f"  Start at: {session['start_at'].strftime('%-I:%M:%S %p')}")
+                print(f"  End at: {session['end_at'].strftime('%-I:%M:%S %p')}")
             print()
 
         # Update JSON for proxy
@@ -433,14 +444,16 @@ class AlwaysBlock:
 
     def block_all(self):
         """Block all domains immediately"""
-        # Cancel all sessions
+        # Cancel all sessions (active, pending, and waiting)
         active = self.db.get_active_sessions()
         pending = self.db.get_pending_sessions()
+        waiting = self.db.get_waiting_sessions()
 
-        for session in active + pending:
+        for session in active + pending + waiting:
             self.db.cancel_session(session['id'])
 
-        print(f"Cancelled {len(active) + len(pending)} sessions")
+        total = len(active) + len(pending) + len(waiting)
+        print(f"Cancelled {total} session{'s' if total != 1 else ''}")
 
         # Update JSON for proxy
         self._write_domains_for_proxy()

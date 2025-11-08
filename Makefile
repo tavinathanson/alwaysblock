@@ -23,6 +23,8 @@ install:
 	@./install.sh
 	@echo ""
 	@echo "$(GREEN)Starting services...$(NC)"
+	@# Ensure database is initialized with correct permissions
+	@~/.alwaysblock-venv/bin/python3 -c "import sys; sys.path.insert(0, '$(PWD)'); from db import Database; from pathlib import Path; Database(Path.home() / '.local/share/alwaysblock/alwaysblock.db')" 2>/dev/null || true
 	@sudo alwaysblock start-proxy
 	@sudo alwaysblock enable-proxy
 	@echo ""
@@ -37,6 +39,8 @@ start:
 	@# Kill any lingering processes on port 8905
 	@-lsof -ti :8905 | xargs kill -9 2>/dev/null || true
 	@sleep 0.5
+	@# Ensure database is initialized with correct permissions
+	@~/.alwaysblock-venv/bin/python3 -c "import sys; sys.path.insert(0, '$(PWD)'); from db import Database; from pathlib import Path; Database(Path.home() / '.local/share/alwaysblock/alwaysblock.db')" 2>/dev/null || true
 	@# Start proxy daemon
 	@sudo alwaysblock start-proxy
 	@# Enable system proxy

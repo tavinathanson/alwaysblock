@@ -32,12 +32,12 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     profile TEXT NOT NULL,
                     domains TEXT NOT NULL,  -- JSON array
-                    status TEXT NOT NULL,   -- 'pending', 'active', 'completed'
+                    status TEXT NOT NULL,   -- 'waiting_for_domain', 'pending', 'active', 'completed'
                     wait_minutes INTEGER NOT NULL,
                     duration_minutes INTEGER NOT NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    start_at TIMESTAMP NOT NULL,  -- When session becomes active
-                    end_at TIMESTAMP NOT NULL     -- When session expires
+                    start_at TIMESTAMP,  -- When session becomes active (NULL for waiting_for_domain)
+                    end_at TIMESTAMP     -- When session expires (NULL for waiting_for_domain)
                 )
             """)
             
@@ -69,65 +69,56 @@ class Database:
     @contextmanager
     def _get_conn(self):
         """Get database connection context manager"""
-        conn = sqlite3.connect(
-            str(self.db_path),
-            detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
-        )
+        # Don't use PARSE_DECLTYPES to avoid deprecated datetime adapters
+        conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         try:
             yield conn
         finally:
             conn.close()
+
+    def _datetime_to_str(self, dt: datetime) -> str:
+        """Convert datetime to ISO format string for storage"""
+        return dt.isoformat()
+
+    def _str_to_datetime(self, s: str) -> datetime:
+        """Convert ISO format string to datetime"""
+        return datetime.fromisoformat(s)
     
     def create_session(self, profile: str, domains: List[str],
-                      wait_minutes: int, duration_minutes: int,
-                      queue_after: Optional[datetime] = None) -> int:
-        """Create a new session, queuing it after any existing sessions for the same domains
+                      wait_minutes: int, duration_minutes: int) -> int:
+        """Create a new session
 
         If any of the domains are already in an active or pending session, this new session
-        will be queued to start after the latest existing session ends, plus the configured
-        wait period. This ensures consistent spacing between consecutive unblocks of the
-        same domain.
+        will be marked as 'waiting_for_domain' and won't calculate its start time until
+        those domains become available. This ensures the wait time is calculated based on
+        the state when the domain actually becomes free, not when the session is created.
 
         Args:
             profile: Profile name
             domains: List of domains to unblock
-            wait_minutes: Minutes to wait before starting
+            wait_minutes: Minutes to wait before starting (stored for later use)
             duration_minutes: Minutes the session lasts
-            queue_after: Optional datetime to force queueing after this time, regardless of domain overlap
         """
         now = datetime.now()
 
-        # Check if any of these domains are already in active/pending sessions
-        domain_overlap_end = self.get_latest_end_time_for_domains(domains)
+        # Check if any of these domains are already in active/pending/waiting sessions
+        domain_in_use = self._check_domain_in_use(domains)
 
-        # Determine which end time to use:
-        # - If domains overlap with existing sessions, ALWAYS use that (domain-based queueing takes priority)
-        # - Otherwise, use queue_after if provided (for serial execution within a single command)
-        if domain_overlap_end is not None and domain_overlap_end > now:
-            # Domain overlap takes priority - queue after the existing session with these domains
-            latest_end = domain_overlap_end
-        elif queue_after is not None and queue_after > now:
-            # No domain overlap, but we want serial execution
-            latest_end = queue_after
+        if domain_in_use:
+            # Domain is currently in use - mark as waiting, don't set start/end times yet
+            status = 'waiting_for_domain'
+            start_at = None
+            end_at = None
+            logger.info(f"Creating waiting session for {domains}: domain currently in use")
         else:
-            latest_end = None
-
-        if latest_end is not None and latest_end > now:
-            # Queue this session after the existing one
-            # Start time = latest existing session end + wait period
-            start_at = latest_end + timedelta(minutes=wait_minutes)
-            logger.info(f"Queueing session for {domains}: existing session ends at {latest_end}, "
-                       f"new session starts at {start_at} (after {wait_minutes}min wait)")
-        else:
-            # No overlapping sessions, schedule as normal
+            # Domain is free - calculate start/end times normally
             start_at = now + timedelta(minutes=wait_minutes)
+            end_at = start_at + timedelta(minutes=duration_minutes)
 
-        end_at = start_at + timedelta(minutes=duration_minutes)
-
-        # Session is active if it should start immediately (start_at <= now)
-        # This handles the case where wait_minutes == 0 and no queue
-        status = 'active' if start_at <= now else 'pending'
+            # Session is active if it should start immediately
+            status = 'active' if start_at <= now else 'pending'
+            logger.info(f"Creating {'active' if status == 'active' else 'pending'} session for {domains}")
 
         with self._get_conn() as conn:
             cursor = conn.execute("""
@@ -141,29 +132,48 @@ class Database:
                 status,
                 wait_minutes,
                 duration_minutes,
-                now,
-                start_at,
-                end_at
+                self._datetime_to_str(now),
+                self._datetime_to_str(start_at) if start_at else None,
+                self._datetime_to_str(end_at) if end_at else None
             ))
             conn.commit()
 
             session_id = cursor.lastrowid
-            logger.info(f"Created session {session_id} for profile '{profile}' with {len(domains)} domains")
+            logger.info(f"Created session {session_id} (status: {status}) for profile '{profile}' with {len(domains)} domains")
 
             return session_id
+
+    def _check_domain_in_use(self, domains: List[str]) -> bool:
+        """Check if any of the given domains are in active/pending sessions (NOT waiting)"""
+        if not domains:
+            return False
+
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT domains FROM sessions
+                WHERE status IN ('pending', 'active')
+            """).fetchall()
+
+            request_domains = set(domains)
+            for row in rows:
+                session_domains = set(json.loads(row['domains']))
+                if request_domains & session_domains:
+                    return True
+
+            return False
     
     def get_active_sessions(self) -> List[Dict[str, Any]]:
         """Get currently active sessions"""
         now = datetime.now()
-        
+
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT * FROM sessions
-                WHERE status = 'active' 
+                WHERE status = 'active'
                 AND end_at > ?
                 ORDER BY end_at
-            """, (now,)).fetchall()
-            
+            """, (self._datetime_to_str(now),)).fetchall()
+
             return [self._row_to_dict(row) for row in rows]
     
     def get_pending_sessions(self) -> List[Dict[str, Any]]:
@@ -177,48 +187,120 @@ class Database:
             
             return [self._row_to_dict(row) for row in rows]
     
+    def get_waiting_sessions(self) -> List[Dict[str, Any]]:
+        """Get sessions waiting for domains to become available"""
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT * FROM sessions
+                WHERE status = 'waiting_for_domain'
+                ORDER BY created_at
+            """).fetchall()
+
+            return [self._row_to_dict(row) for row in rows]
+
     def activate_pending_sessions(self) -> List[Dict[str, Any]]:
         """Check and activate any pending sessions that should start"""
         now = datetime.now()
         activated = []
-        
+
         with self._get_conn() as conn:
             # Find sessions ready to activate
             rows = conn.execute("""
                 SELECT * FROM sessions
                 WHERE status = 'pending'
                 AND start_at <= ?
-            """, (now,)).fetchall()
-            
+            """, (self._datetime_to_str(now),)).fetchall()
+
             for row in rows:
                 session = self._row_to_dict(row)
-                
+
                 # Update status to active
                 conn.execute("""
                     UPDATE sessions
                     SET status = 'active'
                     WHERE id = ?
                 """, (session['id'],))
-                
+
                 activated.append(session)
                 logger.info(f"Activated session {session['id']}")
-            
+
             conn.commit()
-        
+
+        return activated
+
+    def activate_waiting_sessions(self) -> List[Dict[str, Any]]:
+        """Check waiting sessions and transition them to pending/active if domains are now free"""
+        from config_manager import ConfigManager
+
+        activated = []
+        waiting_sessions = self.get_waiting_sessions()
+
+        if not waiting_sessions:
+            return activated
+
+        for session in waiting_sessions:
+            # Check if this session's domains are still in use
+            domains = session['domains']
+
+            # Check if domains are in use by OTHER sessions (not this one)
+            domain_still_in_use = False
+            with self._get_conn() as conn:
+                rows = conn.execute("""
+                    SELECT domains FROM sessions
+                    WHERE status IN ('pending', 'active')
+                    AND id != ?
+                """, (session['id'],)).fetchall()
+
+                request_domains = set(domains)
+                for row in rows:
+                    session_domains = set(json.loads(row['domains']))
+                    if request_domains & session_domains:
+                        domain_still_in_use = True
+                        break
+
+            if not domain_still_in_use:
+                # Domain is free! Calculate timing NOW based on current state
+                # We need to recalculate wait time based on current pending sessions
+                now = datetime.now()
+
+                # Use the stored wait_minutes - in practice this should be recalculated
+                # by the config manager based on current concurrent sessions
+                wait_minutes = session['wait_minutes']
+                duration_minutes = session['duration_minutes']
+
+                start_at = now + timedelta(minutes=wait_minutes)
+                end_at = start_at + timedelta(minutes=duration_minutes)
+                status = 'active' if start_at <= now else 'pending'
+
+                with self._get_conn() as conn:
+                    conn.execute("""
+                        UPDATE sessions
+                        SET status = ?, start_at = ?, end_at = ?
+                        WHERE id = ?
+                    """, (status, self._datetime_to_str(start_at),
+                          self._datetime_to_str(end_at), session['id']))
+                    conn.commit()
+
+                session['status'] = status
+                session['start_at'] = start_at
+                session['end_at'] = end_at
+                activated.append(session)
+                logger.info(f"Activated waiting session {session['id']} -> {status}")
+
         return activated
     
     def expire_sessions(self) -> List[Dict[str, Any]]:
         """Mark expired sessions as completed"""
         now = datetime.now()
         expired = []
-        
+
         with self._get_conn() as conn:
             # Find expired active sessions
             rows = conn.execute("""
                 SELECT * FROM sessions
                 WHERE status = 'active'
                 AND end_at <= ?
-            """, (now,)).fetchall()
+            """, (self._datetime_to_str(now),)).fetchall()
             
             for row in rows:
                 session = self._row_to_dict(row)
@@ -244,10 +326,10 @@ class Database:
                 UPDATE sessions
                 SET status = 'completed'
                 WHERE id = ?
-                AND status IN ('pending', 'active')
+                AND status IN ('waiting_for_domain', 'pending', 'active')
             """, (session_id,))
             conn.commit()
-            
+
             if result.rowcount > 0:
                 logger.info(f"Cancelled session {session_id}")
                 return True
@@ -269,34 +351,35 @@ class Database:
         """Check if profile is on cooldown"""
         if cooldown_minutes <= 0:
             return True  # No cooldown configured
-        
+
         now = datetime.now()
         cooldown_until = now - timedelta(minutes=cooldown_minutes)
-        
+
         with self._get_conn() as conn:
             row = conn.execute("""
                 SELECT last_used FROM cooldowns
                 WHERE profile = ?
                 AND last_used > ?
-            """, (profile, cooldown_until)).fetchone()
-            
+            """, (profile, self._datetime_to_str(cooldown_until))).fetchone()
+
             if row:
                 # Still on cooldown
-                remaining = (row['last_used'] + timedelta(minutes=cooldown_minutes)) - now
+                last_used = self._str_to_datetime(row['last_used'])
+                remaining = (last_used + timedelta(minutes=cooldown_minutes)) - now
                 logger.info(f"Profile '{profile}' on cooldown for {remaining.total_seconds():.0f} seconds")
                 return False
-            
+
             return True
     
     def update_cooldown(self, profile: str):
         """Update last used time for cooldown tracking"""
         now = datetime.now()
-        
+
         with self._get_conn() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO cooldowns (profile, last_used)
                 VALUES (?, ?)
-            """, (profile, now))
+            """, (profile, self._datetime_to_str(now)))
             conn.commit()
     
     def get_all_domains_from_sessions(self) -> List[str]:
@@ -308,42 +391,14 @@ class Database:
 
         return list(domains)
 
-    def get_latest_end_time_for_domains(self, domains: List[str]) -> Optional[datetime]:
-        """Get the latest end_at time for any session containing any of the specified domains
-
-        This is used to queue unblock requests - if any of the domains are already
-        in an active or pending session, we want to queue the new request after
-        the latest existing session ends.
-        """
-        if not domains:
-            return None
-
-        with self._get_conn() as conn:
-            # Get all sessions that might overlap with these domains
-            rows = conn.execute("""
-                SELECT domains, end_at FROM sessions
-                WHERE status IN ('pending', 'active')
-                ORDER BY end_at DESC
-            """).fetchall()
-
-            latest_end = None
-            request_domains = set(domains)
-
-            for row in rows:
-                session_domains = set(json.loads(row['domains']))
-
-                # Check if there's any overlap between request domains and session domains
-                if request_domains & session_domains:
-                    end_at = row['end_at']
-                    if latest_end is None or end_at > latest_end:
-                        latest_end = end_at
-
-            return latest_end
-
     def _row_to_dict(self, row) -> Dict[str, Any]:
         """Convert database row to dictionary"""
         d = dict(row)
         # Parse JSON domains field
         if 'domains' in d and isinstance(d['domains'], str):
             d['domains'] = json.loads(d['domains'])
+        # Convert datetime strings to datetime objects
+        for field in ['created_at', 'start_at', 'end_at', 'last_used']:
+            if field in d and isinstance(d[field], str):
+                d[field] = self._str_to_datetime(d[field])
         return d

@@ -107,9 +107,13 @@ echo "Installing dependencies..."
 NO_PROXY="*" "$VENV_PATH/bin/pip" install -q --upgrade pip
 NO_PROXY="*" "$VENV_PATH/bin/pip" install -q PyYAML
 
-# Create config directories
+# Create config directories with proper ownership
 mkdir -p "$CONFIG_DIR"
 mkdir -p "$DATA_DIR"
+
+# Ensure data directory is owned by current user (not root)
+# This prevents database permission issues when the proxy daemon creates it
+chown -R "$(whoami):staff" "$DATA_DIR"
 
 # Create symlink to example config if needed (preserve existing config)
 if [ ! -e "$CONFIG_DIR/config.yaml" ]; then
@@ -131,6 +135,17 @@ exec ~/.alwaysblock-venv/bin/python3 "$SCRIPT_DIR/alwaysblock.py" "\$@"
 EOF
 
 sudo chmod +x "$CLI_SCRIPT"
+
+# Initialize database with proper permissions (as current user)
+echo "Initializing database..."
+"$VENV_PATH/bin/python3" -c "
+import sys
+sys.path.insert(0, '$SCRIPT_DIR')
+from db import Database
+from pathlib import Path
+db = Database(Path('$DATA_DIR/alwaysblock.db'))
+print('Database initialized')
+"
 
 echo ""
 echo "✅ Installation complete!"

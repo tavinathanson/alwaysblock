@@ -149,14 +149,14 @@ def test_multiple_queued_sessions(db):
             f"Gap between session {i} and {i+1} should be 1 minute, got {gap_minutes}"
 
 
-def test_serial_unblock_multiple_targets(db):
-    """Test that unblocking multiple different domains with queue_after creates serial sessions
+def test_independent_unblock_multiple_targets(db):
+    """Test that unblocking multiple different domains creates independent sessions
 
     This simulates: alwaysblock unblock gmail slack facebook
-    Each should create a separate session that queues after the previous one,
-    even though they have different domains (using the queue_after parameter).
+    Each should create a separate session that starts independently,
+    NOT queued serially (they have different domains).
     """
-    # Create sessions for different domains serially (as if user ran: unblock gmail slack facebook)
+    # Create sessions for different domains (as if user ran: unblock gmail slack facebook)
     targets = [
         ['gmail.com'],
         ['slack.com'],
@@ -164,49 +164,37 @@ def test_serial_unblock_multiple_targets(db):
     ]
 
     session_ids = []
-    last_end_time = None
 
     for domains in targets:
         session_id = db.create_session(
             profile='test',
             domains=domains,
             wait_minutes=1,
-            duration_minutes=5,
-            queue_after=last_end_time  # Force serial queueing
+            duration_minutes=5
         )
         session_ids.append(session_id)
-
-        # Get the session we just created to track its end time
-        sessions = db.get_pending_sessions() + db.get_active_sessions()
-        session = next(s for s in sessions if s['id'] == session_id)
-        last_end_time = session['end_at']
 
     # Get all sessions
     sessions = db.get_pending_sessions()
     assert len(sessions) == 3, "Should have 3 pending sessions"
 
-    # Sort by start time
-    sessions.sort(key=lambda s: s['start_at'])
+    # All sessions should start at roughly the same time (within a few seconds)
+    # because they are independent (different domains)
+    start_times = [s['start_at'] for s in sessions]
+    earliest = min(start_times)
+    latest = max(start_times)
 
-    # Verify they queue sequentially (each starts after previous ends + wait time)
-    for i in range(len(sessions) - 1):
-        current = sessions[i]
-        next_session = sessions[i + 1]
-
-        assert next_session['start_at'] > current['end_at'], \
-            f"Session {i+1} should start after session {i} ends"
-
-        gap_minutes = (next_session['start_at'] - current['end_at']).total_seconds() / 60
-        assert abs(gap_minutes - 1.0) < 0.01, \
-            f"Gap between session {i} and {i+1} should be 1 minute, got {gap_minutes}"
+    time_spread = (latest - earliest).total_seconds()
+    assert time_spread < 5, \
+        f"Independent domains should start at same time, but spread is {time_spread}s"
 
 
-def test_domain_overlap_takes_priority_over_serial_queue(db):
-    """Test that domain-based queueing takes priority over serial queueing
+def test_same_domain_queues_when_active(db):
+    """Test that domain-based queueing works correctly
 
     Scenario: slack is currently active, user runs 'unblock instagram slack'
     - Instagram should start independently (no overlap, no queue)
-    - Slack should queue after the EXISTING slack session, NOT after instagram
+    - Slack should queue after the EXISTING slack session
     """
     # Create an active slack session
     slack_session_1 = db.create_session(
@@ -220,35 +208,29 @@ def test_domain_overlap_takes_priority_over_serial_queue(db):
     sessions = db.get_active_sessions()
     slack_1 = next(s for s in sessions if s['id'] == slack_session_1)
 
-    # Now simulate: unblock instagram slack (serial with queue_after)
-    # Create instagram session
+    # Now simulate: unblock instagram slack
+    # Create instagram session (should be independent)
     instagram_session = db.create_session(
         profile='test',
         domains=['instagram.com'],
         wait_minutes=1,
-        duration_minutes=30,
-        queue_after=None  # First one, no queue
+        duration_minutes=30
     )
 
-    # Get instagram session end time for queue_after
-    sessions = db.get_pending_sessions() + db.get_active_sessions()
-    instagram = next(s for s in sessions if s['id'] == instagram_session)
-
-    # Create second slack session with queue_after set to instagram's end
-    # But it should IGNORE that and queue after the first slack instead
+    # Create second slack session (should queue after first slack)
     slack_session_2 = db.create_session(
         profile='test',
         domains=['slack.com'],
         wait_minutes=1,
-        duration_minutes=30,
-        queue_after=instagram['end_at']  # This should be IGNORED
+        duration_minutes=30
     )
 
     # Get all sessions
     all_sessions = db.get_pending_sessions() + db.get_active_sessions()
+    instagram = next(s for s in all_sessions if s['id'] == instagram_session)
     slack_2 = next(s for s in all_sessions if s['id'] == slack_session_2)
 
-    # Verify: slack_2 should queue after slack_1, NOT after instagram
+    # Verify: slack_2 should queue after slack_1
     assert slack_2['start_at'] > slack_1['end_at'], \
         "Second slack should queue after first slack"
 
@@ -257,18 +239,8 @@ def test_domain_overlap_takes_priority_over_serial_queue(db):
     assert abs(gap_from_slack1 - 1.0) < 0.01, \
         f"Slack 2 should start 1 min after slack 1 ends, got {gap_from_slack1} min"
 
-    # Verify: slack_2 should start around the same time as when slack_1 ends + wait
-    # NOT around when instagram ends + wait
-    # Since slack_1 is active (30 min), instagram is pending (1 wait + 30 dur = 31 min)
-    # slack_2 should be at slack_1 end (30 min) + 1 wait = 31 min
-    # If it were queued after instagram, it would be at 31 + 1 = 32 min
-
-    # Actually, let's just verify the start time is correct
-    import datetime as dt
-    from datetime import datetime
-
-    # Slack 2 should start at: slack_1 end + 1 minute wait
-    expected_start = slack_1['end_at'] + dt.timedelta(minutes=1)
-    time_diff = abs((slack_2['start_at'] - expected_start).total_seconds())
-    assert time_diff < 1, \
-        f"Slack 2 should start at {expected_start}, but starts at {slack_2['start_at']}"
+    # Verify: instagram should start independently (not queued)
+    # It should start at: now + wait_minutes (1 minute)
+    time_from_now = (instagram['start_at'] - datetime.now()).total_seconds() / 60
+    assert abs(time_from_now - 1.0) < 0.1, \
+        f"Instagram should start in ~1 minute (independent), got {time_from_now} min"
