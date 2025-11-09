@@ -188,7 +188,7 @@ class ConfigManager:
             wait = base + concurrent_penalty
 
         # Check for tag-based overrides
-        tag_override_applied = False
+        has_override = False
         if 'tag_rules' in profile:
             for rule in profile['tag_rules']:
                 if 'tags' in rule:
@@ -198,7 +198,7 @@ class ConfigManager:
                             wait = rule['wait_override']
                             matching_tags = [tag for tag in rule['tags'] if tag in all_tags]
                             explanation_parts = [f"{wait} min (override for tags: {', '.join(matching_tags)})"]
-                            tag_override_applied = True
+                            has_override = True
                             break
 
         duration = profile.get('duration', 30)
@@ -210,7 +210,8 @@ class ConfigManager:
             'wait': wait,
             'duration': duration,
             'cooldown': cooldown,
-            'explanation': explanation
+            'explanation': explanation,
+            'has_override': has_override
         }
     
     @property

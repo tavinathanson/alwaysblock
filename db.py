@@ -37,7 +37,8 @@ class Database:
                     duration_minutes INTEGER NOT NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     start_at TIMESTAMP,  -- When session becomes active (NULL for waiting_for_domain)
-                    end_at TIMESTAMP     -- When session expires (NULL for waiting_for_domain)
+                    end_at TIMESTAMP,     -- When session expires (NULL for waiting_for_domain)
+                    has_override INTEGER DEFAULT 0  -- 1 if tag override applied, 0 otherwise
                 )
             """)
             
@@ -60,10 +61,18 @@ class Database:
             """)
             
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_sessions_end_at 
+                CREATE INDEX IF NOT EXISTS idx_sessions_end_at
                 ON sessions(end_at)
             """)
-            
+
+            # Migration: Add has_override column if it doesn't exist
+            try:
+                conn.execute("SELECT has_override FROM sessions LIMIT 1")
+            except sqlite3.OperationalError:
+                # Column doesn't exist, add it
+                conn.execute("ALTER TABLE sessions ADD COLUMN has_override INTEGER DEFAULT 0")
+                logger.info("Added has_override column to sessions table")
+
             conn.commit()
     
     @contextmanager
@@ -86,7 +95,7 @@ class Database:
         return datetime.fromisoformat(s)
     
     def create_session(self, profile: str, domains: List[str],
-                      wait_minutes: int, duration_minutes: int) -> int:
+                      wait_minutes: int, duration_minutes: int, has_override: bool = False) -> int:
         """Create a new session
 
         If any of the domains are already in an active or pending session, this new session
@@ -99,6 +108,7 @@ class Database:
             domains: List of domains to unblock
             wait_minutes: Minutes to wait before starting (stored for later use)
             duration_minutes: Minutes the session lasts
+            has_override: True if this session has a tag-based wait override applied
         """
         now = datetime.now()
 
@@ -124,8 +134,8 @@ class Database:
             cursor = conn.execute("""
                 INSERT INTO sessions
                 (profile, domains, status, wait_minutes, duration_minutes,
-                 created_at, start_at, end_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 created_at, start_at, end_at, has_override)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 profile,
                 json.dumps(domains),
@@ -134,7 +144,8 @@ class Database:
                 duration_minutes,
                 self._datetime_to_str(now),
                 self._datetime_to_str(start_at) if start_at else None,
-                self._datetime_to_str(end_at) if end_at else None
+                self._datetime_to_str(end_at) if end_at else None,
+                1 if has_override else 0
             ))
             conn.commit()
 
@@ -336,15 +347,20 @@ class Database:
             return False
     
     def count_concurrent_pending(self, profile: str) -> int:
-        """Count pending sessions for concurrent penalty calculation"""
+        """Count pending sessions for concurrent penalty calculation
+
+        Only counts sessions without tag-based overrides, so that override sessions
+        (like gmail/slack with 1-min wait) don't inflate the penalty for normal sessions.
+        """
         with self._get_conn() as conn:
             row = conn.execute("""
                 SELECT COUNT(*) as count
                 FROM sessions
                 WHERE profile = ?
                 AND status = 'pending'
+                AND has_override = 0
             """, (profile,)).fetchone()
-            
+
             return row['count'] if row else 0
     
     def check_cooldown(self, profile: str, cooldown_minutes: int) -> bool:

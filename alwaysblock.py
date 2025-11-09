@@ -406,7 +406,8 @@ class AlwaysBlock:
                 profile=profile_name,
                 domains=domains,
                 wait_minutes=timing['wait'],
-                duration_minutes=timing['duration']
+                duration_minutes=timing['duration'],
+                has_override=timing['has_override']
             )
 
             session_ids.append(session_id)
