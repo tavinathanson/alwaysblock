@@ -480,12 +480,20 @@ class AlwaysBlock:
         script_dir = Path(__file__).parent
         plist_path = Path("/Library/LaunchDaemons/com.alwaysblock.daemon.plist")
         daemon_script = Path("/usr/local/bin/alwaysblock-daemon")
+        venv_path = Path.home() / '.alwaysblock-venv'
 
-        # Install daemon script wrapper
-        daemon_content = f"""#!/bin/bash
-# AlwaysBlock daemon wrapper
-exec "{script_dir}/alwaysblock-daemon.sh"
-"""
+        # Read daemon template and substitute venv path
+        daemon_template = script_dir / "alwaysblock-daemon.sh"
+        if not daemon_template.exists():
+            print(f"Error: {daemon_template} not found")
+            sys.exit(1)
+
+        with open(daemon_template, 'r') as f:
+            daemon_content = f.read()
+
+        # Substitute __VENV_PATH__ with actual venv path
+        daemon_content = daemon_content.replace('__VENV_PATH__', str(venv_path))
+
         try:
             with open(daemon_script, 'w') as f:
                 f.write(daemon_content)

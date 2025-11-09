@@ -6,7 +6,13 @@
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-VENV_PATH="$HOME/.alwaysblock-venv"
+
+# This placeholder will be replaced during installation with the actual path
+# VENV_PATH_PLACEHOLDER
+VENV_PATH="__VENV_PATH__"
+
+# Extract user home from venv path (e.g., /Users/tavi/.alwaysblock-venv -> /Users/tavi)
+USER_HOME="${VENV_PATH%/.alwaysblock-venv}"
 
 # Log function
 log() {
@@ -14,20 +20,24 @@ log() {
 }
 
 log "AlwaysBlock daemon starting..."
+log "User home: $USER_HOME"
 
 # Wait a bit for network to be ready
 sleep 5
 
+# Set HOME so Python uses correct config/data paths
+export HOME="$USER_HOME"
+
 # Start the proxy daemon
 log "Starting proxy daemon..."
-if ! "$VENV_PATH/bin/python3" "$SCRIPT_DIR/alwaysblock.py" start-proxy 2>&1; then
+if ! /usr/local/bin/alwaysblock start-proxy 2>&1; then
     log "Failed to start proxy daemon"
     exit 1
 fi
 
 # Enable system proxy
 log "Enabling system proxy..."
-if ! "$VENV_PATH/bin/python3" "$SCRIPT_DIR/alwaysblock.py" enable-proxy 2>&1; then
+if ! /usr/local/bin/alwaysblock enable-proxy 2>&1; then
     log "Failed to enable system proxy"
     exit 1
 fi
@@ -42,7 +52,7 @@ while true; do
     # Health check: ensure proxy is still running
     if ! lsof -i :8905 >/dev/null 2>&1; then
         log "Proxy daemon stopped, restarting..."
-        "$VENV_PATH/bin/python3" "$SCRIPT_DIR/alwaysblock.py" start-proxy 2>&1
+        /usr/local/bin/alwaysblock start-proxy 2>&1
     fi
 
     # Health check: ensure system proxy is still enabled
@@ -52,7 +62,7 @@ while true; do
             if networksetup -listallnetworkservices 2>/dev/null | grep -q "$service"; then
                 if ! networksetup -getwebproxy "$service" 2>/dev/null | grep -q "127.0.0.1"; then
                     log "System proxy disabled on $service, re-enabling..."
-                    "$VENV_PATH/bin/python3" "$SCRIPT_DIR/alwaysblock.py" enable-proxy 2>&1
+                    /usr/local/bin/alwaysblock enable-proxy 2>&1
                     break
                 fi
             fi

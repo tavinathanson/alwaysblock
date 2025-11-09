@@ -152,9 +152,10 @@ echo "✅ Installation complete!"
 echo ""
 
 # Ask about passwordless sudo
-echo "Do you want to enable passwordless sudo for AlwaysBlock commands? (y/n)"
-echo "(This allows commands like 'sudo alwaysblock start-proxy' without entering password)"
-read -r PASSWORDLESS_RESPONSE
+echo ""
+echo "Do you want to enable passwordless sudo for AlwaysBlock commands?"
+echo "(Allows commands like 'sudo alwaysblock start-proxy' without password)"
+read -p "Enable passwordless sudo? [y/N]: " -r PASSWORDLESS_RESPONSE
 
 if [[ "$PASSWORDLESS_RESPONSE" =~ ^[Yy]$ ]]; then
     echo ""
@@ -182,21 +183,25 @@ if [[ "$PASSWORDLESS_RESPONSE" =~ ^[Yy]$ ]]; then
 fi
 
 # Ask about auto-start on boot
-echo "Do you want AlwaysBlock to start automatically on boot? (y/n)"
-read -r AUTOSTART_RESPONSE
+echo ""
+echo "Do you want AlwaysBlock to start automatically on boot?"
+echo "(Services will start when your Mac restarts)"
+read -p "Enable auto-start on boot? [y/N]: " -r AUTOSTART_RESPONSE
 
 if [[ "$AUTOSTART_RESPONSE" =~ ^[Yy]$ ]]; then
     echo ""
     echo "Setting up auto-start on boot..."
 
-    # Install daemon script
+    # Create daemon script with proper venv path substitution
     DAEMON_SCRIPT="/usr/local/bin/alwaysblock-daemon"
-    sudo tee "$DAEMON_SCRIPT" > /dev/null <<EOF
-#!/bin/bash
-# AlwaysBlock daemon wrapper
-exec "$SCRIPT_DIR/alwaysblock-daemon.sh"
-EOF
+    TEMP_DAEMON=$(mktemp)
+
+    # Substitute __VENV_PATH__ with actual venv path
+    sed "s|__VENV_PATH__|$VENV_PATH|g" "$SCRIPT_DIR/alwaysblock-daemon.sh" > "$TEMP_DAEMON"
+
+    sudo cp "$TEMP_DAEMON" "$DAEMON_SCRIPT"
     sudo chmod +x "$DAEMON_SCRIPT"
+    rm -f "$TEMP_DAEMON"
 
     # Install LaunchDaemon plist
     PLIST_PATH="/Library/LaunchDaemons/com.alwaysblock.daemon.plist"
@@ -209,11 +214,15 @@ EOF
 
     echo "✅ Auto-start configured!"
     echo ""
+    echo "Waiting for services to start..."
 
-    # Give it a moment to start
-    sleep 2
-
-    alwaysblock status
+    # Wait for daemon to start services (max 10 seconds)
+    for i in {1..10}; do
+        sleep 1
+        if lsof -i :8905 >/dev/null 2>&1; then
+            break
+        fi
+    done
 else
     # Manual start
     # Restart services if they were running
@@ -242,13 +251,15 @@ else
     fi
 fi
 
-echo "Usage:"
-echo "  alwaysblock status                    # Show current status"
-echo "  alwaysblock unblock reddit            # Temporarily unblock reddit"
-echo "  alwaysblock block-all                 # Block everything immediately"
 echo ""
-echo "Files:"
-echo "  Configuration: $CONFIG_DIR/config.yaml"
-echo "  Proxy logs:    /tmp/proxy.log"
-echo "  Documentation: $SCRIPT_DIR/README.md"
+echo "✅ Installation complete!"
+echo ""
+alwaysblock status
+echo ""
+echo "Quick start:"
+echo "  alwaysblock unblock reddit   # Temporarily unblock a site"
+echo "  alwaysblock block-all        # Block everything immediately"
+echo ""
+echo "Config: $CONFIG_DIR/config.yaml"
+echo "Docs:   $SCRIPT_DIR/README.md"
 echo ""

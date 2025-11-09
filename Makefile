@@ -19,18 +19,7 @@ help:
 	@echo ""
 
 install:
-	@echo "$(GREEN)Installing AlwaysBlock...$(NC)"
 	@./install.sh
-	@echo ""
-	@echo "$(GREEN)Starting services...$(NC)"
-	@# Ensure database is initialized with correct permissions
-	@~/.alwaysblock-venv/bin/python3 -c "import sys; sys.path.insert(0, '$(PWD)'); from db import Database; from pathlib import Path; Database(Path.home() / '.local/share/alwaysblock/alwaysblock.db')" 2>/dev/null || true
-	@sudo alwaysblock start-proxy
-	@sudo alwaysblock enable-proxy
-	@echo ""
-	@echo "$(GREEN)✅ Installation complete! Services are running.$(NC)"
-	@echo ""
-	@alwaysblock status
 
 start:
 	@echo "$(GREEN)Starting AlwaysBlock services...$(NC)"

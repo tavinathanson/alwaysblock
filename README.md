@@ -46,16 +46,39 @@ This works for **all browsers** including Chrome with DNS-over-HTTPS enabled, be
 
 ### Why This Approach?
 
-We tried several approaches before landing on the system proxy solution:
+We evaluated several blocking methods. Each has trade-offs - **no solution is perfect**:
 
-| Approach | Chrome Blocking | Simplicity | Result |
-|----------|----------------|------------|--------|
-| `/etc/hosts` | ❌ 0% (DoH bypass) | ✅ Simple | Rejected |
-| PF IP blocking | ⚠️ 50% (too many IPs) | ⚠️ Medium | Rejected |
-| Network Extension | ⚠️ 10% (packet retry) | ❌ Complex | Rejected |
-| **System HTTP Proxy** | ✅ 98%+ | ✅ Simple | **✓ Works!** |
+| Approach | Chrome w/ DoH | Safari | Kills Active Sessions | Complexity | User Can Bypass? |
+|----------|---------------|--------|----------------------|------------|------------------|
+| `/etc/hosts` only | ⚠️ New connections only | ✅ Works | ❌ No | ✅ Simple | Edit file |
+| `/etc/hosts` + PF IPs | ⚠️ New connections only | ✅ Works | ⚠️ Partial | ⚠️ Medium | Edit file + disable PF |
+| PF IP blocking only | ⚠️ If you know all IPs | ⚠️ If you know all IPs | ✅ Yes | ❌ High maintenance | Disable PF |
+| Network Extension | ❌ IP-only for Chrome | ✅ Full URL access | ✅ Yes | ❌ Very complex | Uninstall extension |
+| **System HTTP Proxy** | ✅ Works | ✅ Works | ✅ Yes | ✅ Simple | **Disable system proxy** |
 
-**Key insight:** Chrome respects system proxy settings even with DoH enabled. By setting our proxy as the system HTTP/HTTPS proxy, we intercept all browser traffic at the connection level and can inspect hostnames before allowing/denying access.
+**What each approach does well:**
+
+- **`/etc/hosts`** ([SelfControl](https://selfcontrolapp.com/) uses this + PF): Excellent for "set and forget" blocking. Works across all apps. SelfControl's genius is making it hard to undo during the timer - you can't just disable it on impulse. Simple and battle-tested.
+
+- **PF IP blocking**: Works at the network layer, blocking packets before they leave your machine. Great for known, static IPs. Can't be bypassed by changing browser settings.
+
+- **Network Extension**: Most powerful option for Safari - can see full URLs, inspect page content, make sophisticated filtering decisions. Used by enterprise content filters.
+
+- **System HTTP Proxy** (our choice): Best for *dynamic* blocking where you want to unblock/reblock sites frequently. Sees hostnames for all browsers, kills active sessions immediately, simple implementation.
+
+**Why we chose the proxy approach:**
+
+Our use case is different from SelfControl - we wanted **flexible, reversible blocking** with time-based delays. Key advantages:
+- **Chrome respects system proxy settings** even with DoH enabled - proxy intercepts traffic before DNS resolution
+- **Active session blocking:** `/etc/hosts` can't interrupt already-established connections (e.g., an open Gmail tab keeps working). Our proxy blocks every HTTP request, so `block-all` immediately kills active sessions.
+- **Long-running connections:** Handles WebSockets and long-polling via bidirectional forwarding
+- **Dynamic updates:** Reload blocklist every 5 seconds without DNS caching issues
+
+**Our honest limitations:**
+- User can disable system proxy in Settings (but that's the point - it's a *commitment device*, not parental controls)
+- Only intercepts HTTP/HTTPS on ports 80/443 (apps using custom ports bypass it)
+- Adds ~5-10ms latency per HTTPS connection (CONNECT handshake overhead)
+- Future TLS Encrypted ClientHello (ECH) will encrypt SNI, breaking hostname inspection (2-3 years away)
 
 ---
 
