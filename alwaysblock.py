@@ -80,8 +80,22 @@ class AlwaysBlock:
 
         # Write to JSON file
         self.json_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Remove existing file if it has wrong permissions
+        try:
+            if self.json_path.exists():
+                self.json_path.unlink()
+        except PermissionError:
+            # File exists but we can't delete it - try to continue anyway
+            print(f"Warning: Could not remove {self.json_path} (permission denied)")
+            print(f"Run 'sudo rm {self.json_path}' to fix this issue")
+            return
+
         with open(self.json_path, 'w') as f:
             json.dump(domains_data, f, indent=2)
+
+        # Make it world-readable/writable so both sudo and non-sudo can access
+        os.chmod(self.json_path, 0o666)
 
     def _process_expired_sessions(self):
         """Check for and process expired sessions"""
