@@ -128,6 +128,10 @@ class AlwaysBlock:
         proxy_status = self.system_proxy.get_status()
         sys_proxy_enabled = proxy_status.get('enabled', False)
         print(f"System proxy: {'🟢 Enabled' if sys_proxy_enabled else '🔴 Disabled'} ({proxy_status.get('enabled_count', 0)}/{proxy_status.get('services_count', 0)} services)")
+
+        # Check auto-start status
+        autostart_enabled = Path("/Library/LaunchDaemons/com.alwaysblock.daemon.plist").exists()
+        print(f"Auto-start:   {'🟢 Enabled' if autostart_enabled else '🔴 Disabled'}")
         print(f"")
 
         if not proxy_running:
@@ -471,6 +475,64 @@ class AlwaysBlock:
             print(f"Error: Session {session_id} not found or already completed")
             sys.exit(1)
 
+    def enable_autostart(self):
+        """Enable auto-start on boot via LaunchDaemon"""
+        script_dir = Path(__file__).parent
+        plist_path = Path("/Library/LaunchDaemons/com.alwaysblock.daemon.plist")
+        daemon_script = Path("/usr/local/bin/alwaysblock-daemon")
+
+        # Install daemon script wrapper
+        daemon_content = f"""#!/bin/bash
+# AlwaysBlock daemon wrapper
+exec "{script_dir}/alwaysblock-daemon.sh"
+"""
+        try:
+            with open(daemon_script, 'w') as f:
+                f.write(daemon_content)
+            os.chmod(daemon_script, 0o755)
+        except PermissionError:
+            print("Error: This command requires sudo")
+            sys.exit(1)
+
+        # Copy plist
+        source_plist = script_dir / "com.alwaysblock.daemon.plist"
+        if not source_plist.exists():
+            print(f"Error: {source_plist} not found")
+            sys.exit(1)
+
+        subprocess.run(['cp', str(source_plist), str(plist_path)], check=True)
+        subprocess.run(['chown', 'root:wheel', str(plist_path)], check=True)
+        subprocess.run(['chmod', '644', str(plist_path)], check=True)
+
+        # Load the LaunchDaemon
+        subprocess.run(['launchctl', 'load', str(plist_path)], check=False)
+
+        print("✅ Auto-start enabled")
+        print("   AlwaysBlock will start automatically on boot")
+
+    def disable_autostart(self):
+        """Disable auto-start on boot"""
+        plist_path = Path("/Library/LaunchDaemons/com.alwaysblock.daemon.plist")
+        daemon_script = Path("/usr/local/bin/alwaysblock-daemon")
+
+        if not plist_path.exists():
+            print("Auto-start is not currently enabled")
+            return
+
+        # Unload the LaunchDaemon
+        subprocess.run(['launchctl', 'unload', str(plist_path)], check=False)
+
+        # Remove files
+        try:
+            plist_path.unlink(missing_ok=True)
+            daemon_script.unlink(missing_ok=True)
+        except PermissionError:
+            print("Error: This command requires sudo")
+            sys.exit(1)
+
+        print("✅ Auto-start disabled")
+        print("   AlwaysBlock will no longer start automatically on boot")
+
 
 def main():
     parser = argparse.ArgumentParser(description='AlwaysBlock - Website blocker with transparent proxy')
@@ -500,6 +562,10 @@ def main():
     cancel_parser = subparsers.add_parser('cancel', help='Cancel an unblock session')
     cancel_parser.add_argument('session_id', type=int, help='Session ID to cancel')
 
+    # Auto-start management
+    subparsers.add_parser('enable-autostart', help='Enable auto-start on boot (requires sudo)')
+    subparsers.add_parser('disable-autostart', help='Disable auto-start on boot (requires sudo)')
+
     args = parser.parse_args()
 
     # Default to status if no command
@@ -528,6 +594,10 @@ def main():
         ab.unblock(args.targets, args.profile)
     elif args.command == 'cancel':
         ab.cancel(args.session_id)
+    elif args.command == 'enable-autostart':
+        ab.enable_autostart()
+    elif args.command == 'disable-autostart':
+        ab.disable_autostart()
 
 
 if __name__ == '__main__':

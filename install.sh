@@ -151,29 +151,95 @@ echo ""
 echo "✅ Installation complete!"
 echo ""
 
-# Restart services if they were running
-if [ "$PROXY_WAS_RUNNING" = true ] || [ "$SYSPROXY_WAS_ENABLED" = true ]; then
-    echo "Restarting proxy daemon..."
-    sudo alwaysblock start-proxy
-fi
+# Ask about passwordless sudo
+echo "Do you want to enable passwordless sudo for AlwaysBlock commands? (y/n)"
+echo "(This allows commands like 'sudo alwaysblock start-proxy' without entering password)"
+read -r PASSWORDLESS_RESPONSE
 
-if [ "$SYSPROXY_WAS_ENABLED" = true ]; then
-    echo "Re-enabling system proxy..."
-    sudo alwaysblock enable-proxy
-fi
-
-# Show status if services were restarted
-if [ "$PROXY_WAS_RUNNING" = true ] || [ "$SYSPROXY_WAS_ENABLED" = true ]; then
+if [[ "$PASSWORDLESS_RESPONSE" =~ ^[Yy]$ ]]; then
     echo ""
+    echo "Setting up passwordless sudo..."
+
+    # Create sudoers file with username substitution
+    SUDOERS_FILE="/etc/sudoers.d/alwaysblock"
+    CURRENT_USER=$(whoami)
+
+    # Create temporary file with username replaced
+    TEMP_SUDOERS=$(mktemp)
+    sed "s/USERNAME/$CURRENT_USER/g" "$SCRIPT_DIR/com.alwaysblock.sudoers" > "$TEMP_SUDOERS"
+
+    # Validate the sudoers file before installing
+    if sudo visudo -cf "$TEMP_SUDOERS"; then
+        sudo cp "$TEMP_SUDOERS" "$SUDOERS_FILE"
+        sudo chmod 440 "$SUDOERS_FILE"
+        echo "✅ Passwordless sudo configured!"
+    else
+        echo "❌ Error: sudoers file validation failed"
+        rm -f "$TEMP_SUDOERS"
+    fi
+    rm -f "$TEMP_SUDOERS"
+    echo ""
+fi
+
+# Ask about auto-start on boot
+echo "Do you want AlwaysBlock to start automatically on boot? (y/n)"
+read -r AUTOSTART_RESPONSE
+
+if [[ "$AUTOSTART_RESPONSE" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "Setting up auto-start on boot..."
+
+    # Install daemon script
+    DAEMON_SCRIPT="/usr/local/bin/alwaysblock-daemon"
+    sudo tee "$DAEMON_SCRIPT" > /dev/null <<EOF
+#!/bin/bash
+# AlwaysBlock daemon wrapper
+exec "$SCRIPT_DIR/alwaysblock-daemon.sh"
+EOF
+    sudo chmod +x "$DAEMON_SCRIPT"
+
+    # Install LaunchDaemon plist
+    PLIST_PATH="/Library/LaunchDaemons/com.alwaysblock.daemon.plist"
+    sudo cp "$SCRIPT_DIR/com.alwaysblock.daemon.plist" "$PLIST_PATH"
+    sudo chown root:wheel "$PLIST_PATH"
+    sudo chmod 644 "$PLIST_PATH"
+
+    # Load the LaunchDaemon
+    sudo launchctl load "$PLIST_PATH" 2>/dev/null || true
+
+    echo "✅ Auto-start configured!"
+    echo ""
+
+    # Give it a moment to start
+    sleep 2
+
     alwaysblock status
-    echo ""
 else
-    # First time install - show setup instructions
-    echo "Setup (run these commands):"
-    echo "  1. sudo alwaysblock start-proxy       # Start the proxy daemon"
-    echo "  2. sudo alwaysblock enable-proxy      # Enable system proxy"
-    echo "  3. alwaysblock status                 # Verify everything is running"
-    echo ""
+    # Manual start
+    # Restart services if they were running
+    if [ "$PROXY_WAS_RUNNING" = true ] || [ "$SYSPROXY_WAS_ENABLED" = true ]; then
+        echo "Restarting proxy daemon..."
+        sudo alwaysblock start-proxy
+    fi
+
+    if [ "$SYSPROXY_WAS_ENABLED" = true ]; then
+        echo "Re-enabling system proxy..."
+        sudo alwaysblock enable-proxy
+    fi
+
+    # Show status if services were restarted
+    if [ "$PROXY_WAS_RUNNING" = true ] || [ "$SYSPROXY_WAS_ENABLED" = true ]; then
+        echo ""
+        alwaysblock status
+        echo ""
+    else
+        # First time install - show setup instructions
+        echo "Setup (run these commands):"
+        echo "  1. sudo alwaysblock start-proxy       # Start the proxy daemon"
+        echo "  2. sudo alwaysblock enable-proxy      # Enable system proxy"
+        echo "  3. alwaysblock status                 # Verify everything is running"
+        echo ""
+    fi
 fi
 
 echo "Usage:"

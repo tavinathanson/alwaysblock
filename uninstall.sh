@@ -5,6 +5,26 @@ echo "AlwaysBlock Uninstall"
 echo "===================="
 echo ""
 
+# Unload and remove LaunchDaemon if it exists
+PLIST_PATH="/Library/LaunchDaemons/com.alwaysblock.daemon.plist"
+if [ -f "$PLIST_PATH" ]; then
+    echo "Removing auto-start LaunchDaemon..."
+    sudo launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    sudo rm -f "$PLIST_PATH"
+fi
+
+# Remove daemon script
+if [ -f "/usr/local/bin/alwaysblock-daemon" ]; then
+    sudo rm -f /usr/local/bin/alwaysblock-daemon
+fi
+
+# Remove passwordless sudo configuration
+SUDOERS_FILE="/etc/sudoers.d/alwaysblock"
+if [ -f "$SUDOERS_FILE" ]; then
+    echo "Removing passwordless sudo configuration..."
+    sudo rm -f "$SUDOERS_FILE"
+fi
+
 # Stop proxy if running
 if command -v alwaysblock &> /dev/null; then
     echo "Stopping proxy daemon..."
