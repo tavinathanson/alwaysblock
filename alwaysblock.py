@@ -81,21 +81,44 @@ class AlwaysBlock:
         # Write to JSON file
         self.json_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Remove existing file if it has wrong permissions
+        # Write atomically using a temp file, then move it
+        import tempfile
+        temp_fd, temp_path = tempfile.mkstemp(dir=self.json_path.parent, suffix='.json')
         try:
-            if self.json_path.exists():
-                self.json_path.unlink()
-        except PermissionError:
-            # File exists but we can't delete it - try to continue anyway
-            print(f"Warning: Could not remove {self.json_path} (permission denied)")
-            print(f"Run 'sudo rm {self.json_path}' to fix this issue")
-            return
+            # Write to temp file
+            with os.fdopen(temp_fd, 'w') as f:
+                json.dump(domains_data, f, indent=2)
 
-        with open(self.json_path, 'w') as f:
-            json.dump(domains_data, f, indent=2)
+            # Set permissions on temp file before moving
+            os.chmod(temp_path, 0o666)
 
-        # Make it world-readable/writable so both sudo and non-sudo can access
-        os.chmod(self.json_path, 0o666)
+            # If target file exists, try to replace it
+            # If we can't replace it (permission error), write directly to it instead
+            try:
+                os.replace(temp_path, str(self.json_path))
+            except PermissionError:
+                # Can't replace (file owned by root), but we can write to it (666 perms)
+                # Write directly instead of replacing
+                try:
+                    with open(self.json_path, 'w') as f:
+                        json.dump(domains_data, f, indent=2)
+                    # Clean up temp file since we wrote directly
+                    os.unlink(temp_path)
+                except Exception as write_error:
+                    # Can't write either - clean up and give up
+                    os.unlink(temp_path)
+                    print(f"Warning: Could not update {self.json_path}: {write_error}")
+                    print(f"Run 'sudo rm {self.json_path}' to reset permissions")
+                    return
+        except Exception as e:
+            # Clean up temp file if something went wrong
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+            # Only raise if it's not a permission error we already handled
+            if not isinstance(e, PermissionError):
+                raise e
 
     def _process_expired_sessions(self):
         """Check for and process expired sessions"""
