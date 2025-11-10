@@ -206,6 +206,8 @@ alwaysblock block-all
 alwaysblock cancel <session_id>
 ```
 
+**Note:** Commands that need root privileges (start, stop, restart, etc.) will automatically prompt for your password - no need to type `sudo`.
+
 ### Unblocking Sites
 
 ```bash
@@ -240,12 +242,12 @@ alwaysblock uninstall
 alwaysblock uninstall --remove-data
 ```
 
-### Advanced: Low-level Proxy Management
+### Advanced: Component-Level Control
 
-Most users should use `start`/`stop`/`restart`, but you can control components separately:
+Most users should use `start`/`stop`/`restart`, but you can control components separately if needed:
 
 ```bash
-# Just the proxy daemon (prompts for password)
+# Just the proxy daemon
 alwaysblock start-proxy
 alwaysblock stop-proxy
 alwaysblock restart-proxy
@@ -255,7 +257,11 @@ alwaysblock enable-proxy
 alwaysblock disable-proxy
 ```
 
+All commands automatically prompt for your password when needed.
+
 ### Auto-Start on Boot
+
+Enable auto-start to have AlwaysBlock running automatically when your Mac boots:
 
 ```bash
 # Enable auto-start on boot (prompts for password)
@@ -266,6 +272,13 @@ alwaysblock disable-autostart
 
 # Check status
 alwaysblock status  # Shows auto-start status
+```
+
+**Important:** With auto-start enabled, the daemon keeps services running. If you manually stop services, they'll restart within 60 seconds. To stop permanently:
+
+```bash
+alwaysblock disable-autostart  # Disable the monitoring daemon
+alwaysblock stop               # Stop services
 ```
 
 ---
@@ -392,6 +405,21 @@ When auto-start is enabled, the LaunchDaemon will:
 3. Enable system proxy
 4. Monitor every 60 seconds to ensure both services are running
 5. Automatically restart services if they stop
+
+### What Auto-Start Does
+
+The daemon monitors your system and:
+- Starts the proxy daemon on boot
+- Enables the system proxy on boot
+- Checks every 60 seconds that services are running
+- Automatically restarts them if they stop
+
+**Note:** If auto-start is enabled and you manually stop services, the daemon will restart them within 60 seconds. To stop services permanently, disable auto-start first:
+
+```bash
+alwaysblock disable-autostart
+alwaysblock stop
+```
 
 ### Files Created
 
@@ -646,15 +674,15 @@ One command removes everything:
 alwaysblock uninstall
 ```
 
-This will prompt for your password, then:
-- Stop the proxy daemon
+This will:
+- Stop all running services
+- Disable auto-start (if enabled)
 - Disable system proxy
-- Unload LaunchDaemon (if enabled)
 - Remove CLI from `/usr/local/bin`
 - Remove passwordless sudo rules (if configured)
-- Optionally remove configuration and data
+- Ask if you want to remove configuration and data
 
-To also remove configuration and data:
+To skip the prompt and remove everything including data:
 
 ```bash
 alwaysblock uninstall --remove-data
