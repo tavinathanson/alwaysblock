@@ -578,6 +578,243 @@ class AlwaysBlock:
         print("✅ Auto-start disabled")
         print("   AlwaysBlock will no longer start automatically on boot")
 
+    def uninstall(self, remove_data=False):
+        """Uninstall AlwaysBlock"""
+        print("AlwaysBlock Uninstall")
+        print("====================")
+        print("")
+
+        # Unload and remove LaunchDaemon if it exists
+        plist_path = Path("/Library/LaunchDaemons/com.alwaysblock.daemon.plist")
+        if plist_path.exists():
+            print("Removing auto-start LaunchDaemon...")
+            subprocess.run(['launchctl', 'unload', str(plist_path)], check=False, stderr=subprocess.DEVNULL)
+            try:
+                plist_path.unlink(missing_ok=True)
+            except PermissionError:
+                print("Error: Cannot remove LaunchDaemon (requires sudo)")
+                sys.exit(1)
+
+        # Remove daemon script
+        daemon_script = Path("/usr/local/bin/alwaysblock-daemon")
+        if daemon_script.exists():
+            try:
+                daemon_script.unlink()
+            except PermissionError:
+                print("Error: Cannot remove daemon script (requires sudo)")
+                sys.exit(1)
+
+        # Remove passwordless sudo configuration
+        sudoers_file = Path("/etc/sudoers.d/alwaysblock")
+        if sudoers_file.exists():
+            print("Removing passwordless sudo configuration...")
+            try:
+                sudoers_file.unlink()
+            except PermissionError:
+                print("Error: Cannot remove sudoers file (requires sudo)")
+                sys.exit(1)
+
+        # Stop proxy if running
+        print("Stopping proxy daemon...")
+        self.stop_proxy()
+
+        print("Disabling system proxy...")
+        self.disable_system_proxy()
+
+        # Kill any processes on port 8905
+        try:
+            result = subprocess.run(
+                ['lsof', '-ti', ':8905'],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                for pid in pids:
+                    subprocess.run(['kill', '-9', pid], check=False, stderr=subprocess.DEVNULL)
+                print("Killed remaining proxy processes...")
+        except:
+            pass
+
+        # Remove CLI
+        cli_path = Path("/usr/local/bin/alwaysblock")
+        if cli_path.exists():
+            print("Removing CLI...")
+            try:
+                cli_path.unlink()
+            except PermissionError:
+                print("Error: Cannot remove CLI (requires sudo)")
+                sys.exit(1)
+
+        # Remove PF rules (legacy cleanup)
+        pf_anchor = Path("/etc/pf.anchors/com.alwaysblock")
+        if pf_anchor.exists():
+            print("Removing PF rules...")
+            try:
+                pf_anchor.unlink()
+            except PermissionError:
+                pass
+
+        pf_conf = Path("/etc/pf.conf")
+        if pf_conf.exists():
+            try:
+                with open(pf_conf, 'r') as f:
+                    content = f.read()
+                if 'com.alwaysblock' in content or 'AlwaysBlock' in content:
+                    print("Cleaning PF configuration...")
+                    # Note: Would need sudo to modify pf.conf
+                    print("Warning: You may need to manually clean /etc/pf.conf")
+            except:
+                pass
+
+        # Remove old Network Extension if exists (legacy cleanup)
+        old_app = Path("/Applications/AlwaysBlock.app")
+        if old_app.exists():
+            print("Removing old Network Extension app...")
+            try:
+                subprocess.run(['rm', '-rf', str(old_app)], check=False)
+            except:
+                pass
+
+        if remove_data:
+            print("Removing configuration and data...")
+            config_dir = Path.home() / '.config' / 'alwaysblock'
+            data_dir = Path.home() / '.local' / 'share' / 'alwaysblock'
+            venv_dir = Path.home() / '.alwaysblock-venv'
+
+            for dir_path in [config_dir, data_dir, venv_dir]:
+                if dir_path.exists():
+                    subprocess.run(['rm', '-rf', str(dir_path)], check=False)
+
+            print("Configuration and data removed.")
+        else:
+            print("Keeping configuration and data:")
+            print("  Config: ~/.config/alwaysblock")
+            print("  Data:   ~/.local/share/alwaysblock")
+            print("  Venv:   ~/.alwaysblock-venv")
+            print("")
+            print("To remove manually: rm -rf ~/.config/alwaysblock ~/.local/share/alwaysblock ~/.alwaysblock-venv")
+
+        print("")
+        print("✅ AlwaysBlock uninstalled successfully!")
+        print("")
+
+    def upgrade(self):
+        """Upgrade AlwaysBlock to latest version"""
+        print("AlwaysBlock Upgrade")
+        print("===================")
+        print("")
+
+        # Get script directory (repo root)
+        script_dir = Path(__file__).parent
+
+        # Check if we're in a git repo
+        if not (script_dir / '.git').exists():
+            print("Error: Not in a git repository")
+            print("Please clone from GitHub to enable upgrades")
+            sys.exit(1)
+
+        print("Fetching latest changes...")
+        try:
+            result = subprocess.run(
+                ['git', 'pull'],
+                cwd=script_dir,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            print(result.stdout)
+
+            if "Already up to date" in result.stdout:
+                print("✅ Already on latest version")
+                return
+
+        except subprocess.CalledProcessError as e:
+            print(f"Error: Failed to pull latest changes")
+            print(e.stderr)
+            sys.exit(1)
+
+        # Check if services were running before upgrade
+        proxy_was_running = self.is_proxy_running()
+        sysproxy_enabled = self.system_proxy.get_status().get('enabled', False)
+
+        print("Running install script to apply updates...")
+        install_script = script_dir / 'install.sh'
+
+        if not install_script.exists():
+            print("Error: install.sh not found")
+            sys.exit(1)
+
+        try:
+            # Run install script - it will preserve config and restart services if needed
+            subprocess.run(['bash', str(install_script)], cwd=script_dir, check=True)
+        except subprocess.CalledProcessError:
+            print("Error: Installation failed")
+            sys.exit(1)
+
+        print("")
+        print("✅ Upgrade complete!")
+        print("")
+
+    def start(self):
+        """Start all AlwaysBlock services"""
+        print("Starting AlwaysBlock services...")
+        self.start_proxy()
+        print("")
+        self.enable_system_proxy()
+        print("")
+        print("✅ All services started")
+        print("")
+        self.status()
+
+    def stop(self):
+        """Stop all AlwaysBlock services"""
+        print("Stopping AlwaysBlock services...")
+        self.disable_system_proxy()
+        print("")
+        self.stop_proxy()
+        print("")
+        print("✅ All services stopped")
+
+    def restart(self):
+        """Restart all AlwaysBlock services"""
+        self.stop()
+        print("")
+        time.sleep(1)
+        self.start()
+
+    def test(self):
+        """Run test suite"""
+        script_dir = Path(__file__).parent
+        venv_dir = script_dir / 'venv'
+
+        # Create venv if needed
+        if not venv_dir.exists():
+            print("Creating test virtual environment...")
+            subprocess.run(['python3', '-m', 'venv', str(venv_dir)], check=True)
+
+            # Install requirements
+            print("Installing test dependencies...")
+            pip_path = venv_dir / 'bin' / 'pip'
+            requirements = script_dir / 'requirements.txt'
+            subprocess.run([str(pip_path), 'install', '-r', str(requirements), '-q'], check=True)
+
+        # Run pytest
+        print("Running tests...")
+        print("")
+        pytest_path = venv_dir / 'bin' / 'pytest'
+        result = subprocess.run([str(pytest_path)], cwd=script_dir)
+        sys.exit(result.returncode)
+
+
+def require_sudo():
+    """Re-execute the current command with sudo if not running as root"""
+    if os.geteuid() != 0:
+        # Re-execute with sudo, using the same Python interpreter (venv)
+        args = ['sudo', '-E', sys.executable] + sys.argv
+        os.execvp('sudo', args)
+
 
 def main():
     parser = argparse.ArgumentParser(description='AlwaysBlock - Website blocker with transparent proxy')
@@ -586,7 +823,12 @@ def main():
     # Status command
     subparsers.add_parser('status', help='Show current status')
 
-    # Proxy daemon management
+    # Service management (high-level)
+    subparsers.add_parser('start', help='Start all services (proxy + system proxy)')
+    subparsers.add_parser('stop', help='Stop all services (proxy + system proxy)')
+    subparsers.add_parser('restart', help='Restart all services')
+
+    # Proxy daemon management (low-level)
     subparsers.add_parser('start-proxy', help='Start transparent proxy daemon')
     subparsers.add_parser('stop-proxy', help='Stop transparent proxy daemon')
     subparsers.add_parser('restart-proxy', help='Restart transparent proxy daemon')
@@ -611,16 +853,45 @@ def main():
     subparsers.add_parser('enable-autostart', help='Enable auto-start on boot (requires sudo)')
     subparsers.add_parser('disable-autostart', help='Disable auto-start on boot (requires sudo)')
 
+    # Uninstall command
+    uninstall_parser = subparsers.add_parser('uninstall', help='Uninstall AlwaysBlock (requires sudo)')
+    uninstall_parser.add_argument('--remove-data', action='store_true', help='Also remove configuration and data')
+
+    # Upgrade command
+    subparsers.add_parser('upgrade', help='Upgrade to latest version from git')
+
+    # Test command
+    subparsers.add_parser('test', help='Run test suite')
+
     args = parser.parse_args()
 
     # Default to status if no command
     if not args.command:
         args.command = 'status'
 
+    # Commands that require root
+    sudo_commands = {
+        'start', 'stop', 'restart',
+        'start-proxy', 'stop-proxy', 'restart-proxy',
+        'enable-proxy', 'disable-proxy',
+        'enable-autostart', 'disable-autostart',
+        'uninstall'
+    }
+
+    # Re-exec with sudo if needed
+    if args.command in sudo_commands:
+        require_sudo()
+
     ab = AlwaysBlock()
 
     if args.command == 'status':
         ab.status()
+    elif args.command == 'start':
+        ab.start()
+    elif args.command == 'stop':
+        ab.stop()
+    elif args.command == 'restart':
+        ab.restart()
     elif args.command == 'start-proxy':
         ab.start_proxy()
     elif args.command == 'stop-proxy':
@@ -643,6 +914,12 @@ def main():
         ab.enable_autostart()
     elif args.command == 'disable-autostart':
         ab.disable_autostart()
+    elif args.command == 'uninstall':
+        ab.uninstall(remove_data=args.remove_data)
+    elif args.command == 'upgrade':
+        ab.upgrade()
+    elif args.command == 'test':
+        ab.test()
 
 
 if __name__ == '__main__':

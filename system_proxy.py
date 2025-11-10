@@ -103,7 +103,11 @@ class SystemProxy:
                     check=True
                 )
 
-                if f"Server: {self.proxy_host}" in result.stdout and f"Port: {self.proxy_port}" in result.stdout:
+                # Check if proxy is configured AND enabled (not just configured)
+                has_proxy = f"Server: {self.proxy_host}" in result.stdout and f"Port: {self.proxy_port}" in result.stdout
+                is_enabled = "Enabled: Yes" in result.stdout
+
+                if has_proxy and is_enabled:
                     enabled_count += 1
 
             except subprocess.CalledProcessError:

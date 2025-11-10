@@ -8,6 +8,7 @@ A macOS website blocker that's always running. The friction is always there, so 
 
 - [The Idea](#the-idea)
 - [Installation](#installation)
+  - [Upgrading](#upgrading)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Usage](#usage)
@@ -70,27 +71,32 @@ This will:
 
 **Safe to run multiple times** - preserves your configuration.
 
+### Upgrading
+
+To upgrade to the latest version:
+
+```bash
+alwaysblock upgrade
+```
+
+This will:
+- Pull latest changes from git
+- Run the install script to apply updates
+- Restart services if they were running
+
 ---
 
 ## Quick Start
 
-### 1. Start the Proxy
+### 1. Start AlwaysBlock
 
 ```bash
-sudo alwaysblock start-proxy
+alwaysblock start
 ```
 
-The proxy daemon runs in the background and must be started as root.
+This starts the proxy daemon and enables the system proxy. You'll be prompted for your password.
 
-### 2. Enable System Proxy
-
-```bash
-sudo alwaysblock enable-proxy
-```
-
-This configures macOS to route all HTTP/HTTPS traffic through the AlwaysBlock proxy.
-
-### 3. Verify
+### 2. Verify
 
 ```bash
 alwaysblock status
@@ -103,7 +109,7 @@ System proxy: 🟢 Enabled (2/2 services)
 Auto-start:   🔴 Disabled
 ```
 
-### 4. Try blocking a site
+### 3. Try blocking a site
 
 Open Chrome and try to visit a configured blocked site (e.g., `reddit.com`). You should see a connection error.
 
@@ -184,6 +190,15 @@ profiles:
 # Check status
 alwaysblock status
 
+# Start all services (prompts for password)
+alwaysblock start
+
+# Stop all services
+alwaysblock stop
+
+# Restart all services
+alwaysblock restart
+
 # Block all domains immediately
 alwaysblock block-all
 
@@ -209,33 +224,45 @@ alwaysblock unblock -p bypass facebook
 
 **Important:** When you unblock multiple domains at once, each creates a separate session with its own timing. Sessions are **order-dependent** - later domains get higher concurrent penalties. However, sessions with tag overrides (like `gmail` and `slack` with 1-min wait) don't count toward the penalty for other sessions.
 
-### Managing the Proxy
+### Maintenance
 
 ```bash
-# Start proxy daemon
-sudo alwaysblock start-proxy
+# Upgrade to latest version
+alwaysblock upgrade
 
-# Stop proxy daemon
-sudo alwaysblock stop-proxy
+# Run tests
+alwaysblock test
 
-# Restart proxy daemon
-sudo alwaysblock restart-proxy
+# Uninstall completely (prompts for password)
+alwaysblock uninstall
 
-# Enable system proxy
-sudo alwaysblock enable-proxy
+# Uninstall and remove all data
+alwaysblock uninstall --remove-data
+```
 
-# Disable system proxy
-sudo alwaysblock disable-proxy
+### Advanced: Low-level Proxy Management
+
+Most users should use `start`/`stop`/`restart`, but you can control components separately:
+
+```bash
+# Just the proxy daemon (prompts for password)
+alwaysblock start-proxy
+alwaysblock stop-proxy
+alwaysblock restart-proxy
+
+# Just the system proxy setting
+alwaysblock enable-proxy
+alwaysblock disable-proxy
 ```
 
 ### Auto-Start on Boot
 
 ```bash
-# Enable auto-start on boot
-sudo alwaysblock enable-autostart
+# Enable auto-start on boot (prompts for password)
+alwaysblock enable-autostart
 
 # Disable auto-start
-sudo alwaysblock disable-autostart
+alwaysblock disable-autostart
 
 # Check status
 alwaysblock status  # Shows auto-start status
@@ -413,15 +440,15 @@ tail -f /tmp/proxy.log
 
 **Restart proxy:**
 ```bash
-sudo alwaysblock restart-proxy
+alwaysblock restart-proxy
 ```
 
 ### System proxy not enabled
 
 **Re-enable:**
 ```bash
-sudo alwaysblock disable-proxy
-sudo alwaysblock enable-proxy
+alwaysblock disable-proxy
+alwaysblock enable-proxy
 ```
 
 **Manual check in System Settings:**
@@ -438,7 +465,7 @@ lsof -i :8905
 
 **If not running:**
 ```bash
-sudo alwaysblock start-proxy
+alwaysblock start-proxy
 ```
 
 ### Auto-start not working after reboot
@@ -477,7 +504,7 @@ sudo -n alwaysblock start-proxy  # Should not prompt
 ### Internet broken after disabling
 
 ```bash
-sudo alwaysblock disable-proxy
+alwaysblock disable-proxy
 ```
 
 This removes the proxy from system settings and restores normal internet.
@@ -577,13 +604,12 @@ reddit:
 
 Quick test that it works:
 
-1. Start the proxy: `sudo alwaysblock start-proxy`
-2. Enable system proxy: `sudo alwaysblock enable-proxy`
-3. Try to visit a blocked site like `reddit.com` in Chrome
-4. Should get a connection error
-5. Unblock it: `alwaysblock unblock reddit`
-6. Wait out the timer (or use `-p quick` for a shorter wait)
-7. Reddit should load
+1. Start AlwaysBlock: `alwaysblock start`
+2. Try to visit a blocked site like `reddit.com` in Chrome
+3. Should get a connection error
+4. Unblock it: `alwaysblock unblock reddit`
+5. Wait out the timer (or use `-p quick` for a shorter wait)
+6. Reddit should load
 
 Test that `block-all` kills active sessions:
 
@@ -595,7 +621,7 @@ Test that `block-all` kills active sessions:
 Automated tests:
 
 ```bash
-make test
+alwaysblock test
 ```
 
 ---
@@ -617,16 +643,22 @@ Things this doesn't handle:
 One command removes everything:
 
 ```bash
-./uninstall.sh
+alwaysblock uninstall
 ```
 
-This will:
+This will prompt for your password, then:
 - Stop the proxy daemon
 - Disable system proxy
 - Unload LaunchDaemon (if enabled)
 - Remove CLI from `/usr/local/bin`
 - Remove passwordless sudo rules (if configured)
 - Optionally remove configuration and data
+
+To also remove configuration and data:
+
+```bash
+alwaysblock uninstall --remove-data
+```
 
 ---
 
