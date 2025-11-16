@@ -36,8 +36,28 @@ class SystemProxy:
         """Enable system proxy for all network services"""
         services = self.get_network_services()
 
+        # Bypass domains for local networks and captive portals
+        bypass_domains = [
+            '*.local',
+            '169.254.0.0/16',      # Link-local
+            '192.168.0.0/16',      # Private network
+            '10.0.0.0/8',          # Private network
+            '172.16.0.0/12',       # Private network
+            'localhost',
+            '127.0.0.1',
+            'captive.apple.com',   # Apple captive portal detection
+            '*.apple.com',         # Other Apple services
+        ]
+
         for service in services:
             try:
+                # Set bypass domains first
+                subprocess.run(
+                    ['networksetup', '-setproxybypassdomains', service] + bypass_domains,
+                    check=True,
+                    capture_output=True
+                )
+
                 # Set HTTP proxy
                 subprocess.run(
                     ['networksetup', '-setwebproxy', service, self.proxy_host, str(self.proxy_port)],
@@ -59,6 +79,7 @@ class SystemProxy:
 
         print(f"✅ System proxy enabled: {self.proxy_host}:{self.proxy_port}")
         print(f"   Applied to {len(services)} network service(s)")
+        print(f"   Bypassing local networks and captive portals")
 
     def disable_proxy(self):
         """Disable system proxy for all network services"""
@@ -76,6 +97,13 @@ class SystemProxy:
                 # Disable HTTPS proxy
                 subprocess.run(
                     ['networksetup', '-setsecurewebproxystate', service, 'off'],
+                    check=True,
+                    capture_output=True
+                )
+
+                # Clear bypass domains (restore to empty)
+                subprocess.run(
+                    ['networksetup', '-setproxybypassdomains', service, ''],
                     check=True,
                     capture_output=True
                 )

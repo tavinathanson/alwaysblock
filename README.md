@@ -7,6 +7,7 @@ A macOS website blocker that's always running. The friction is always there, so 
 ## Table of Contents
 
 - [The Idea](#the-idea)
+- [How It Works (ELI5)](#how-it-works-eli5)
 - [Installation](#installation)
   - [Upgrading](#upgrading)
 - [Quick Start](#quick-start)
@@ -34,21 +35,51 @@ A macOS website blocker that's always running. The friction is always there, so 
 
 Most website blockers work like this: you're productive, so you block distracting sites. Then you hit a slump, disable the blocker, waste time, feel bad, re-enable it. Repeat forever.
 
-The problem is relying on yourself to actively block things when you're already in a bad state.
+AlwaysBlock is different: the blocking is **always on**. There's always friction between you and reddit/twitter/whatever. You never have to remember to turn it on, and you can't forget to turn it back on because it never turns off.
 
-AlwaysBlock tries something different: the blocking is **always on**. There's always friction between you and reddit/twitter/whatever. You never have to remember to turn it on, and you can't forget to turn it back on because it never turns off.
-
-But if the friction was too high (completely blocked, no way to access), you'd just disable the whole thing. So the friction is calibrated to be annoying enough that you usually don't bother, but permissive enough that you leave it running.
-
-When you want to access a blocked site, you can—but you have to wait a few minutes first. The wait gives you time to reconsider. If you really need it, you'll wait. If you were just mindlessly clicking, the friction stops you.
+The friction is calibrated to be annoying enough that you usually don't bother, but permissive enough that you leave it running. When you want to access a blocked site, you can, but you have to wait a few minutes first.
 
 Key points:
 - It's always running (set it up once, works across reboots)
-- You can always access blocked sites (this isn't parental controls)
-- But there's always a delay (usually 5 minutes, configurable per site)
+- You can always access blocked sites
+- There's always a delay (usually 5 minutes, configurable per site)
 - The delay resets when the site blocks again (time-limited access)
 
-I built this because I kept going in circles with traditional blockers. This approach has worked better for me. Your mileage may vary.
+I built this because I kept going in circles with traditional blockers. This approach has worked better for me.
+
+---
+
+## How It Works (ELI5)
+
+**The simple version:**
+
+Your Mac has a setting called "system proxy" that tells all your apps: "before you connect to any website, ask this program first." AlwaysBlock sets itself as that program.
+
+When you try to visit `reddit.com`, your browser asks AlwaysBlock "can I connect to reddit.com?" AlwaysBlock checks its list, sees reddit is blocked, and says "no." Your browser gets a connection refused error.
+
+When you unblock reddit, AlwaysBlock updates its list. Now when your browser asks, AlwaysBlock says "yes" and forwards your connection to reddit. Your browser doesn't know anything changed, it just works.
+
+**Important things to understand:**
+
+**It's not a firewall or deep packet inspector.** AlwaysBlock only sees the hostname (like "reddit.com") from the initial connection request. It can't see what pages you visit, what you type, or any encrypted content. It just sees "this app wants to connect to reddit.com" and decides yes/no.
+
+**You can disable it anytime.** Go to System Settings → Network → [Your Network] → Proxies and uncheck the boxes. Your internet works normally.
+
+**It only affects HTTP/HTTPS.** Apps that use custom protocols or ports (like SSH, games, VPNs) bypass it entirely.
+
+**Local networks are bypassed.** Traffic to your router (192.168.x.x), printer, local servers, etc. doesn't go through the proxy. Neither do captive portals (WiFi login pages). Only internet traffic is affected.
+
+**Security/Privacy stuff:**
+
+**No MITM (man-in-the-middle).** AlwaysBlock doesn't decrypt HTTPS traffic. It can't see encrypted content. It only reads the unencrypted hostname from the connection request (this is how all HTTP proxies work).
+
+**Runs locally.** Everything runs on your Mac (127.0.0.1). No data leaves your computer. No cloud service, no telemetry.
+
+**Requires sudo.** Starting the proxy requires admin password because it needs to bind to a port and modify system settings. The code is open source if you want to audit it.
+
+**Browser extensions can bypass it.** VPN extensions, proxy extensions, or changing browser proxy settings can bypass AlwaysBlock.
+
+**It's easy to circumvent.** If you want to bypass it, you can.
 
 ---
 
@@ -206,7 +237,7 @@ alwaysblock block-all
 alwaysblock cancel <session_id>
 ```
 
-**Note:** Commands that need root privileges (start, stop, restart, etc.) will automatically prompt for your password - no need to type `sudo`.
+Commands that need root privileges (start, stop, restart, etc.) will automatically prompt for your password.
 
 ### Unblocking Sites
 
@@ -224,7 +255,7 @@ alwaysblock unblock -p quick gmail
 alwaysblock unblock -p bypass facebook
 ```
 
-**Important:** When you unblock multiple domains at once, each creates a separate session with its own timing. Sessions are **order-dependent** - later domains get higher concurrent penalties. However, sessions with tag overrides (like `gmail` and `slack` with 1-min wait) don't count toward the penalty for other sessions.
+When you unblock multiple domains at once, each creates a separate session with its own timing. Sessions are **order-dependent**: later domains get higher concurrent penalties. However, sessions with tag overrides (like `gmail` and `slack` with 1-min wait) don't count toward the penalty for other sessions.
 
 ### Maintenance
 
@@ -274,7 +305,7 @@ alwaysblock disable-autostart
 alwaysblock status  # Shows auto-start status
 ```
 
-**Important:** With auto-start enabled, the daemon keeps services running. If you manually stop services, they'll restart within 60 seconds. To stop permanently:
+With auto-start enabled, the daemon keeps services running. If you manually stop services, they'll restart within 60 seconds. To stop permanently:
 
 ```bash
 alwaysblock disable-autostart  # Disable the monitoring daemon
@@ -414,7 +445,7 @@ The daemon monitors your system and:
 - Checks every 60 seconds that services are running
 - Automatically restarts them if they stop
 
-**Note:** If auto-start is enabled and you manually stop services, the daemon will restart them within 60 seconds. To stop services permanently, disable auto-start first:
+To stop services permanently, disable auto-start first:
 
 ```bash
 alwaysblock disable-autostart
@@ -453,6 +484,22 @@ Other sudo commands will still require a password.
 ---
 
 ## Troubleshooting
+
+### Can't login to WiFi networks (captive portals)
+
+If you're joining a WiFi network at a coffee shop, airport, or hotel and the login page doesn't appear, that used to be an AlwaysBlock issue. It's fixed now.
+
+Those networks use "captive portals" (login pages hosted on local IP addresses like 192.168.1.1). AlwaysBlock now automatically bypasses the proxy for local networks (192.168.x.x, 10.x.x.x, etc.), Apple's captive portal detection (captive.apple.com), and localhost.
+
+**To verify bypass rules are set:**
+```bash
+networksetup -getproxybypassdomains Wi-Fi
+```
+
+You should see the list of bypass domains. If you installed AlwaysBlock before this fix, restart the proxy to apply:
+```bash
+alwaysblock restart
+```
 
 ### Proxy not blocking
 
@@ -543,16 +590,19 @@ This removes the proxy from system settings and restores normal internet.
 
 I tried a few different approaches before landing on this one:
 
-1. **DNS blocking** (`/etc/hosts`)—Chrome bypassed it with DNS-over-HTTPS
-2. **Network Extension**—required a lot of code and Chrome would just retry failed requests
-3. **System HTTP proxy**—this is what I ended up using
+1. **DNS blocking** (`/etc/hosts`). Chrome bypassed it with DNS-over-HTTPS
+2. **Network Extension**. Required a lot of code and Chrome would just retry failed requests
+3. **System HTTP proxy**. This is what I ended up using
 
 The proxy approach works like this:
 
 ```
 Browser tries to visit reddit.com
     ↓
-macOS routes the request through our proxy (127.0.0.1:8905)
+macOS checks bypass rules (192.168.x.x, captive.apple.com, etc.)
+    ↓
+If bypassed: connect directly
+Otherwise: route through our proxy (127.0.0.1:8905)
     ↓
 Proxy checks if reddit.com is blocked
     ↓
@@ -561,6 +611,8 @@ If allowed: forward to reddit.com
 ```
 
 This works for Chrome even with DNS-over-HTTPS because system proxy settings get enforced before DNS resolution happens.
+
+The proxy is automatically bypassed for local networks (192.168.x.x, 10.x.x.x, etc.), localhost, and Apple's captive portal detection.
 
 ### Why the proxy approach?
 
@@ -572,22 +624,20 @@ I needed something that could:
 
 The proxy does all of this. It sees the hostname from the HTTP CONNECT request before any encryption happens, blocks what needs blocking, and forwards everything else.
 
-### What this approach doesn't do well
+### Limitations of this approach
 
-- You can disable the system proxy in Settings (but that's the point—this is a commitment device, not parental controls)
+- You can disable the system proxy in Settings
 - Only intercepts HTTP/HTTPS on ports 80/443 (apps on custom ports bypass it)
 - Adds about 5-10ms latency per HTTPS connection
 - Future TLS Encrypted ClientHello (ECH) will encrypt the hostname, breaking this approach (probably 2-3 years away)
 
 ### Other approaches I considered
 
-This isn't meant to be comprehensive, just what I learned while building this:
-
 - **`/etc/hosts`**: Simple and works well for permanent blocking. [SelfControl](https://selfcontrolapp.com/) combines this with packet filtering and makes it hard to disable during a timer, which is clever. But it can't interrupt active connections (open tabs keep working) and Chrome bypasses it with DoH for new connections.
 
 - **PF IP blocking**: Works at the network layer, can't be bypassed by browser settings. But you need to know all the IPs ahead of time, sites use multiple IPs/CDNs, and IPs change.
 
-- **Network Extension**: Most powerful option for Safari—sees full URLs, can inspect page content. Enterprise content filters use this. But it's complicated to build and Chrome only exposes IP addresses, not hostnames.
+- **Network Extension**: Most powerful option for Safari. Sees full URLs, can inspect page content. Enterprise content filters use this. But it's complicated to build and Chrome only exposes IP addresses, not hostnames.
 
 Each approach has trade-offs. I picked the one that fit what I was trying to do.
 
@@ -595,13 +645,13 @@ Each approach has trade-offs. I picked the one that fit what I was trying to do.
 
 The code is split into a few Python scripts:
 
-- **`http_proxy.py`** - HTTP/HTTPS proxy with hostname inspection
-- **`system_proxy.py`** - Manages macOS system proxy settings
-- **`alwaysblock.py`** - CLI for configuration and daemon management
-- **`config_manager.py`** - YAML config parser with domain groups
-- **`db.py`** - SQLite for session tracking and queueing
-- **`session_manager.py`** - Background daemon for session expiration
-- **`alwaysblock-daemon.sh`** - LaunchDaemon script for auto-start
+- **`http_proxy.py`**: HTTP/HTTPS proxy with hostname inspection
+- **`system_proxy.py`**: Manages macOS system proxy settings
+- **`alwaysblock.py`**: CLI for configuration and daemon management
+- **`config_manager.py`**: YAML config parser with domain groups
+- **`db.py`**: SQLite for session tracking and queueing
+- **`session_manager.py`**: Background daemon for session expiration
+- **`alwaysblock-daemon.sh`**: LaunchDaemon script for auto-start
 
 ### Some implementation details
 
@@ -619,12 +669,12 @@ reddit:
 ```
 
 **Session states**: When you unblock a site, it goes through states:
-- `pending` - waiting for the delay timer
-- `active` - currently accessible
-- `waiting_for_domain` - queued because that domain is already active
-- `completed` - expired or cancelled
+- `pending`: waiting for the delay timer
+- `active`: currently accessible
+- `waiting_for_domain`: queued because that domain is already active
+- `completed`: expired or cancelled
 
-**Database**: Uses SQLite to track sessions and cooldowns. Nothing fancy.
+**Database**: Uses SQLite to track sessions and cooldowns.
 
 ---
 
@@ -656,13 +706,11 @@ alwaysblock test
 
 ## Limitations
 
-Things this doesn't handle:
-
-1. You can disable the system proxy in Settings (but that's the whole point—commitment device, not parental controls)
-2. Requires sudo to run the proxy
-3. Only intercepts HTTP/HTTPS on ports 80/443
-4. Adds about 5-10ms latency per HTTPS connection (haven't noticed this in practice)
-5. Future TLS Encrypted ClientHello (ECH) will encrypt hostnames, breaking this approach (probably 2-3 years out)
+- You can disable the system proxy in Settings
+- Requires sudo to run the proxy
+- Only intercepts HTTP/HTTPS on ports 80/443
+- Adds about 5-10ms latency per HTTPS connection
+- Future TLS Encrypted ClientHello (ECH) will encrypt hostnames, breaking this approach (probably 2-3 years out)
 
 ---
 
