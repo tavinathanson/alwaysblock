@@ -15,15 +15,24 @@ A macOS website blocker that's always running. The friction is always there, so 
 - [Usage](#usage)
   - [Basic Commands](#basic-commands)
   - [Unblocking Sites](#unblocking-sites)
-  - [Managing the Proxy](#managing-the-proxy)
-  - [Auto-Start on Boot](#auto-start-on-boot)
+  - [Maintenance](#maintenance)
+  - [Advanced: Component-Level Control](#advanced-component-level-control)
 - [Advanced Features](#advanced-features)
   - [Profiles](#profiles)
   - [Tag System](#tag-system)
   - [Concurrent Penalty](#concurrent-penalty)
   - [Queueing Behavior](#queueing-behavior)
-- [How It Actually Works](#how-it-actually-works)
+- [Auto-Start Setup](#auto-start-setup)
 - [Troubleshooting](#troubleshooting)
+- [How It Actually Works](#how-it-actually-works)
+  - [The Proxy Approach](#the-proxy-approach)
+  - [What AlwaysBlock Can and Can't See](#what-alwaysblock-can-and-cant-see)
+  - [Privacy and Security](#privacy-and-security)
+  - [What's Bypassed](#whats-bypassed)
+  - [Why the Proxy Approach?](#why-the-proxy-approach)
+  - [Other Approaches I Considered](#other-approaches-i-considered)
+  - [Components](#components)
+  - [Implementation Details](#implementation-details)
 - [Testing](#testing)
 - [Limitations](#limitations)
 - [Uninstall](#uninstall)
@@ -51,35 +60,11 @@ I built this because I kept going in circles with traditional blockers. This app
 
 ## How It Works (ELI5)
 
-**The simple version:**
+AlwaysBlock uses macOS's system proxy setting. When you try to visit a website, your browser asks AlwaysBlock first. AlwaysBlock checks its list: if the site is blocked, it refuses the connection. If it's allowed, it forwards your request.
 
-Your Mac has a setting called "system proxy" that tells all your apps: "before you connect to any website, ask this program first." AlwaysBlock sets itself as that program.
+It only sees hostnames (like "reddit.com"), not your browsing content or passwords. Everything runs locally on your Mac. You can disable it anytime in System Settings → Network → Proxies.
 
-When you try to visit `reddit.com`, your browser asks AlwaysBlock "can I connect to reddit.com?" AlwaysBlock checks its list, sees reddit is blocked, and says "no." Your browser gets a connection refused error.
-
-When you unblock reddit, AlwaysBlock updates its list. Now when your browser asks, AlwaysBlock says "yes" and forwards your connection to reddit. Your browser doesn't know anything changed, it just works.
-
-**Important things to understand:**
-
-**It's not a firewall or deep packet inspector.** AlwaysBlock only sees the hostname (like "reddit.com") from the initial connection request. It can't see what pages you visit, what you type, or any encrypted content. It just sees "this app wants to connect to reddit.com" and decides yes/no.
-
-**You can disable it anytime.** Go to System Settings → Network → [Your Network] → Proxies and uncheck the boxes. Your internet works normally.
-
-**It only affects HTTP/HTTPS.** Apps that use custom protocols or ports (like SSH, games, VPNs) bypass it entirely.
-
-**Local networks are bypassed.** Traffic to your router (192.168.x.x), printer, local servers, etc. doesn't go through the proxy. Neither do captive portals (WiFi login pages). Only internet traffic is affected.
-
-**Security/Privacy stuff:**
-
-**No MITM (man-in-the-middle).** AlwaysBlock doesn't decrypt HTTPS traffic. It can't see encrypted content. It only reads the unencrypted hostname from the connection request (this is how all HTTP proxies work).
-
-**Runs locally.** Everything runs on your Mac (127.0.0.1). No data leaves your computer. No cloud service, no telemetry.
-
-**Requires sudo.** Starting the proxy requires admin password because it needs to bind to a port and modify system settings. The code is open source if you want to audit it.
-
-**Browser extensions can bypass it.** VPN extensions, proxy extensions, or changing browser proxy settings can bypass AlwaysBlock.
-
-**It's easy to circumvent.** If you want to bypass it, you can.
+For technical details about privacy, security, and how the proxy actually works, see [How It Actually Works](#how-it-actually-works).
 
 ---
 
@@ -290,27 +275,7 @@ alwaysblock disable-proxy
 
 All commands automatically prompt for your password when needed.
 
-### Auto-Start on Boot
-
-Enable auto-start to have AlwaysBlock running automatically when your Mac boots:
-
-```bash
-# Enable auto-start on boot (prompts for password)
-alwaysblock enable-autostart
-
-# Disable auto-start
-alwaysblock disable-autostart
-
-# Check status
-alwaysblock status  # Shows auto-start status
-```
-
-With auto-start enabled, the daemon keeps services running. If you manually stop services, they'll restart within 60 seconds. To stop permanently:
-
-```bash
-alwaysblock disable-autostart  # Disable the monitoring daemon
-alwaysblock stop               # Stop services
-```
+For auto-start on boot configuration, see [Auto-Start Setup](#auto-start-setup).
 
 ---
 
@@ -588,13 +553,9 @@ This removes the proxy from system settings and restores normal internet.
 
 ## How It Actually Works
 
-I tried a few different approaches before landing on this one:
+### The Proxy Approach
 
-1. **DNS blocking** (`/etc/hosts`). Chrome bypassed it with DNS-over-HTTPS
-2. **Network Extension**. Required a lot of code and Chrome would just retry failed requests
-3. **System HTTP proxy**. This is what I ended up using
-
-The proxy approach works like this:
+AlwaysBlock uses macOS's system HTTP proxy setting. Here's the flow:
 
 ```
 Browser tries to visit reddit.com
@@ -612,7 +573,35 @@ If allowed: forward to reddit.com
 
 This works for Chrome even with DNS-over-HTTPS because system proxy settings get enforced before DNS resolution happens.
 
-The proxy is automatically bypassed for local networks (192.168.x.x, 10.x.x.x, etc.), localhost, and Apple's captive portal detection.
+### What AlwaysBlock Can and Can't See
+
+**AlwaysBlock is not a firewall or deep packet inspector.** It only sees the hostname (like "reddit.com") from the initial HTTPS CONNECT request. It cannot see:
+- What pages you visit
+- What you type
+- Any encrypted content
+- Anything after the connection is established
+
+It just sees "this app wants to connect to reddit.com" and decides yes/no.
+
+### Privacy and Security
+
+**No MITM (man-in-the-middle).** AlwaysBlock doesn't decrypt HTTPS traffic. It only reads the unencrypted hostname from the connection request (this is how all HTTP proxies work).
+
+**Runs locally.** Everything runs on your Mac (127.0.0.1). No data leaves your computer. No cloud service, no telemetry.
+
+**Requires sudo.** Starting the proxy requires admin password because it needs to bind to a port and modify system settings. The code is open source if you want to audit it.
+
+### What's Bypassed
+
+**Local networks:** Traffic to your router (192.168.x.x), printer, local servers, etc. doesn't go through the proxy. Neither do captive portals (WiFi login pages).
+
+**Non-HTTP traffic:** Apps that use custom protocols or ports (like SSH, games, VPNs) bypass it entirely. Only HTTP/HTTPS on ports 80/443 are intercepted.
+
+**You can disable it anytime.** Go to System Settings → Network → [Your Network] → Proxies and uncheck the boxes. Your internet works normally.
+
+**Browser extensions can bypass it.** VPN extensions, proxy extensions, or changing browser proxy settings can bypass AlwaysBlock.
+
+**It's easy to circumvent.** If you want to bypass it, you can.
 
 ### Why the proxy approach?
 
@@ -653,7 +642,7 @@ The code is split into a few Python scripts:
 - **`session_manager.py`**: Background daemon for session expiration
 - **`alwaysblock-daemon.sh`**: LaunchDaemon script for auto-start
 
-### Some implementation details
+### Implementation Details
 
 **Subdomain matching**: If you block `google.com`, it also blocks `mail.google.com` and `drive.google.com`, but not `googleusercontent.com` (different root domain).
 
