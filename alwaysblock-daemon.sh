@@ -28,31 +28,24 @@ sleep 5
 # Set HOME so Python uses correct config/data paths
 export HOME="$USER_HOME"
 
-# Start the proxy daemon
-log "Starting proxy daemon..."
-if ! /usr/local/bin/alwaysblock start-proxy 2>&1; then
-    log "Failed to start proxy daemon"
-    exit 1
-fi
-
-# Enable system proxy
-log "Enabling system proxy..."
-if ! /usr/local/bin/alwaysblock enable-proxy 2>&1; then
-    log "Failed to enable system proxy"
+# Start all AlwaysBlock services
+log "Starting AlwaysBlock services..."
+if ! /usr/local/bin/alwaysblock start 2>&1; then
+    log "Failed to start AlwaysBlock"
     exit 1
 fi
 
 log "AlwaysBlock daemon started successfully"
 
 # Keep running (LaunchDaemon will restart us if we exit)
-# We don't actually need to stay running, but KeepAlive will restart us if services stop
+# Monitor services and restart if they stop
 while true; do
     sleep 60
 
     # Health check: ensure proxy is still running
     if ! lsof -i :8905 >/dev/null 2>&1; then
         log "Proxy daemon stopped, restarting..."
-        /usr/local/bin/alwaysblock start-proxy 2>&1
+        /usr/local/bin/alwaysblock start 2>&1
     fi
 
     # Health check: ensure system proxy is still enabled
@@ -62,7 +55,7 @@ while true; do
             if networksetup -listallnetworkservices 2>/dev/null | grep -q "$service"; then
                 if ! networksetup -getwebproxy "$service" 2>/dev/null | grep -q "127.0.0.1"; then
                     log "System proxy disabled on $service, re-enabling..."
-                    /usr/local/bin/alwaysblock enable-proxy 2>&1
+                    /usr/local/bin/alwaysblock start 2>&1
                     break
                 fi
             fi

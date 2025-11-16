@@ -391,6 +391,8 @@ class AlwaysBlock:
         Each target creates a separate session that queues sequentially.
         For example: 'unblock gmail slack facebook' creates 3 sessions,
         each waiting for the previous one to complete before starting.
+
+        If targets is empty, unblocks ALL configured domains.
         """
         if not profile_name:
             profile_name = self.config_manager.get_default_profile()
@@ -399,16 +401,27 @@ class AlwaysBlock:
             print(f"Error: Invalid profile '{profile_name}'")
             sys.exit(1)
 
-        # Validate all targets first
-        all_resolved = []
-        all_invalid = []
+        # If no targets specified, use all configured domains
+        if not targets:
+            all_domains = self.config_manager.get_all_configured_domains()
+            if not all_domains:
+                print("Error: No domains configured")
+                sys.exit(1)
+            # Create a single session with all domains
+            targets = ['__ALL__']  # Special marker
+            all_resolved = [('all domains', all_domains)]
+            all_invalid = []
+        else:
+            # Validate all targets first
+            all_resolved = []
+            all_invalid = []
 
-        for target in targets:
-            resolved, invalid = self.config_manager.resolve_domains([target])
-            if resolved:
-                all_resolved.append((target, resolved))
-            if invalid:
-                all_invalid.extend(invalid)
+            for target in targets:
+                resolved, invalid = self.config_manager.resolve_domains([target])
+                if resolved:
+                    all_resolved.append((target, resolved))
+                if invalid:
+                    all_invalid.extend(invalid)
 
         # Show error for invalid targets
         if all_invalid:
@@ -817,6 +830,32 @@ def require_sudo():
 
 
 def main():
+    # Check if first arg might be a profile shortcut
+    # We need to do this before argparse to dynamically rewrite args
+    if len(sys.argv) > 1:
+        potential_command = sys.argv[1]
+
+        # Load config to check for profiles (but don't error if config doesn't exist)
+        config_path = Path.home() / '.config' / 'alwaysblock' / 'config.yaml'
+        available_profiles = []
+
+        if config_path.exists():
+            try:
+                import yaml
+                with open(config_path, 'r') as f:
+                    config_data = yaml.safe_load(f) or {}
+                    available_profiles = list(config_data.get('profiles', {}).keys())
+            except:
+                pass
+
+        # If the command matches a profile name, rewrite args
+        # Transform: alwaysblock bypass reddit -> alwaysblock unblock -p bypass reddit
+        # Transform: alwaysblock bypass -> alwaysblock unblock -p bypass
+        if potential_command in available_profiles:
+            profile_name = sys.argv[1]
+            remaining_args = sys.argv[2:]  # Could be empty or domain names
+            sys.argv = [sys.argv[0], 'unblock', '-p', profile_name] + remaining_args
+
     parser = argparse.ArgumentParser(description='AlwaysBlock - Website blocker with transparent proxy')
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
 
@@ -828,18 +867,9 @@ def main():
     subparsers.add_parser('stop', help='Stop all services (proxy + system proxy)')
     subparsers.add_parser('restart', help='Restart all services')
 
-    # Proxy daemon management (low-level)
-    subparsers.add_parser('start-proxy', help='Start transparent proxy daemon')
-    subparsers.add_parser('stop-proxy', help='Stop transparent proxy daemon')
-    subparsers.add_parser('restart-proxy', help='Restart transparent proxy daemon')
-
-    # System proxy management
-    subparsers.add_parser('enable-proxy', help='Enable system-wide proxy (requires sudo)')
-    subparsers.add_parser('disable-proxy', help='Disable system-wide proxy (requires sudo)')
-
     # Unblock command
     unblock_parser = subparsers.add_parser('unblock', help='Temporarily unblock domains')
-    unblock_parser.add_argument('targets', nargs='+', help='Domains, tags, or groups to unblock')
+    unblock_parser.add_argument('targets', nargs='*', help='Domains, tags, or groups to unblock (default: all)')
     unblock_parser.add_argument('-p', '--profile', help='Profile to use for unblocking')
 
     # Block all command
@@ -872,8 +902,6 @@ def main():
     # Commands that require root
     sudo_commands = {
         'start', 'stop', 'restart',
-        'start-proxy', 'stop-proxy', 'restart-proxy',
-        'enable-proxy', 'disable-proxy',
         'enable-autostart', 'disable-autostart',
         'uninstall'
     }
@@ -892,18 +920,6 @@ def main():
         ab.stop()
     elif args.command == 'restart':
         ab.restart()
-    elif args.command == 'start-proxy':
-        ab.start_proxy()
-    elif args.command == 'stop-proxy':
-        ab.stop_proxy()
-    elif args.command == 'restart-proxy':
-        ab.stop_proxy()
-        time.sleep(0.5)
-        ab.start_proxy()
-    elif args.command == 'enable-proxy':
-        ab.enable_system_proxy()
-    elif args.command == 'disable-proxy':
-        ab.disable_system_proxy()
     elif args.command == 'block-all':
         ab.block_all()
     elif args.command == 'unblock':

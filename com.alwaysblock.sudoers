@@ -2,17 +2,16 @@
 # This file should be installed to /etc/sudoers.d/alwaysblock
 #
 # Allows the current user to run specific alwaysblock commands without password:
-# - start-proxy, stop-proxy, restart-proxy
-# - enable-proxy, disable-proxy
+# - start, stop, restart
 # - enable-autostart, disable-autostart
+# - uninstall
 #
 # Install with: sudo visudo -cf /etc/sudoers.d/alwaysblock
 
 # Replace USERNAME with the actual username during installation
-USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock start-proxy
-USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock stop-proxy
-USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock restart-proxy
-USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock enable-proxy
-USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock disable-proxy
+USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock start
+USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock stop
+USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock restart
 USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock enable-autostart
 USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock disable-autostart
+USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock uninstall

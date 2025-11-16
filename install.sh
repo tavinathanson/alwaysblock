@@ -40,8 +40,8 @@ if command -v alwaysblock &> /dev/null; then
         SYSPROXY_WAS_ENABLED=true
     fi
 
-    echo "Stopping existing proxy..."
-    sudo alwaysblock stop-proxy 2>/dev/null || true
+    echo "Stopping existing services..."
+    sudo alwaysblock stop 2>/dev/null || true
 fi
 
 # Kill any processes on port 8905
@@ -154,7 +154,7 @@ echo ""
 # Ask about passwordless sudo
 echo ""
 echo "Do you want to enable passwordless sudo for AlwaysBlock commands?"
-echo "(Allows commands like 'sudo alwaysblock start-proxy' without password)"
+echo "(Allows commands like 'sudo alwaysblock start' without password)"
 read -p "Enable passwordless sudo? [y/N]: " -r PASSWORDLESS_RESPONSE
 
 if [[ "$PASSWORDLESS_RESPONSE" =~ ^[Yy]$ ]]; then
@@ -227,13 +227,8 @@ else
     # Manual start
     # Restart services if they were running
     if [ "$PROXY_WAS_RUNNING" = true ] || [ "$SYSPROXY_WAS_ENABLED" = true ]; then
-        echo "Restarting proxy daemon..."
-        sudo alwaysblock start-proxy
-    fi
-
-    if [ "$SYSPROXY_WAS_ENABLED" = true ]; then
-        echo "Re-enabling system proxy..."
-        sudo alwaysblock enable-proxy
+        echo "Restarting services..."
+        sudo alwaysblock start
     fi
 
     # Show status if services were restarted
@@ -244,9 +239,8 @@ else
     else
         # First time install - show setup instructions
         echo "Setup (run these commands):"
-        echo "  1. sudo alwaysblock start-proxy       # Start the proxy daemon"
-        echo "  2. sudo alwaysblock enable-proxy      # Enable system proxy"
-        echo "  3. alwaysblock status                 # Verify everything is running"
+        echo "  1. sudo alwaysblock start    # Start all services"
+        echo "  2. alwaysblock status        # Verify everything is running"
         echo ""
     fi
 fi
