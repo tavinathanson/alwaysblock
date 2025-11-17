@@ -140,6 +140,12 @@ Edit `~/.config/alwaysblock/config.yaml`:
 ```yaml
 default_profile: unblock
 
+# Globally excluded domains (always allowed, even if parent domain is blocked)
+excluded_domains:
+  - accounts.google.com   # Allow Google accounts (for GSuite login)
+  - myaccount.google.com  # Allow Google account management
+  - accounts.youtube.com  # Allow YouTube accounts (for GSuite login)
+
 domains:
   # Individual domains
   reddit.com:
