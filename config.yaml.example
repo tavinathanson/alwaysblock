@@ -1,28 +1,168 @@
-# AlwaysBlock Configuration (Simple Example)
+# AlwaysBlock Configuration
+# Block distracting websites with intentional delays
 
 default_profile: unblock
 
 domains:
-  facebook.com:
+  # Individual domains
+  netflix.com:
+    tags: [ultra_distracting, entertainment]
+
   instagram.com:
-  twitter.com:
-  x.com:
+    tags: [social, distracting]
+
   reddit.com:
+    tags: [social, distracting]
+
   youtube.com:
+    tags: [entertainment, distracting]
+
+  eventbrite.com:
+    tags: [events]
+
+  nytimes.com:
+    tags: [news]
+
+  cnn.com:
+    tags: [news]
+
+  timesofisrael.com:
+    tags: [news]
+
+  jpost.com:
+    tags: [news]
+
+  mrmoneymustache.com:
+    tags: [finance]
+
+  washingtonpost.com:
+    tags: [news]
+
+  foxnews.com:
+    tags: [news]
+
+  linkedin.com:
+    tags: [social, professional]
+
+  simplifimoney.com:
+    tags: [finance]
+
+  nextdoor.com:
+    tags: [social]
+
+  news.ycombinator.com:
+    tags: [tech, news]
+
+  # Domain groups
+  twitter:
+    domains:
+      - twitter.com
+      - x.com
+      - api.x.com
+      - t.co
+      - twimg.com
+      - twitpic.com
+      - api.twitter.com
+      - mobile.twitter.com
+      - publish.twitter.com
+      - ads.twitter.com
+      - analytics.twitter.com
+      - cards.twitter.com
+      - cdn.twitter.com
+      - developer.twitter.com
+      - help.twitter.com
+      - pbs.twimg.com
+      - abs.twimg.com
+      - video.twimg.com
+      - vault.twimg.com
+      - upload.twitter.com
+      - stream.twitter.com
+      - tweetdeck.twitter.com
+      - ton.twitter.com
+      - si0.twimg.com
+      - si.twimg.com
+      - o.twimg.com
+      - ma.twimg.com
+      - syndication.twitter.com
+      - support.twitter.com
+      - blog.twitter.com
+      - business.twitter.com
+      - careers.twitter.com
+      - about.twitter.com
+      - legal.twitter.com
+      - status.twitter.com
+      - partners.twitter.com
+      - ads-api.twitter.com
+      - dev.twitter.com
+    tags: [social, distracting]
+
+  facebook:
+    domains:
+      - facebook.com
+      - messenger.com
+      - m.me
+      - fbcdn.net
+      - business.facebook.com
+      - adsmanager.facebook.com
+    tags: [social, distracting]
+
+  slack:
+    domains:
+      - slack.com
+      - slack-edge.com
+      - cdn.slack.com
+      - api.slack.com
+    tags: [communication, work]
+
+  gmail:
+    domains:
+      - gmail.com
+      - www.gmail.com
+      - mail.google.com
+      - www.mail.google.com
+      - googlemail.com
+      - www.googlemail.com
+    tags: [communication, email]
 
 profiles:
-  # Standard: 5 min wait, 30 min access
+  # Standard unblock
   unblock:
-    wait: 5
-    duration: 30
+    description: "Standard unblock with wait time"
+    wait:
+      base: 5              # 5 minute wait
+      concurrent_penalty: 5 # +5 min per concurrent unblock
+    duration: 30           # Stay unblocked for 30 minutes
 
-  # Quick check: 30 sec wait, 1 min access
+    # Tag-based wait time overrides
+    tag_rules:
+      - tags: [ultra_distracting]
+        wait_override: 30  # 30 min wait for Netflix, etc.
+      - tags: [work, communication]
+        wait_override: 1   # 1 min wait for Slack
+
+  # Quick check
   quick:
-    wait: 0.5
+    description: "Quick 1-minute check"
+    wait: 0.5              # 30 seconds
     duration: 1
 
-  # Emergency bypass: instant, 5 min access, 1 hour cooldown
+  # Emergency bypass
   bypass:
+    description: "Emergency 5-minute unblock (once per hour)"
     wait: 0
     duration: 5
     cooldown: 60
+
+  # Work mode
+  work:
+    description: "Work mode - Slack only"
+    wait: 0
+    duration: 120          # 2 hours
+    only: [slack]
+
+  # News reading
+  news:
+    description: "News reading session"
+    wait: 5
+    duration: 20
+    tags: [news]

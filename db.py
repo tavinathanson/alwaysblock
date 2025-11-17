@@ -48,6 +48,15 @@ class Database:
                     last_used TIMESTAMP NOT NULL
                 )
             """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS blocked_attempts (
+                    domain TEXT PRIMARY KEY,
+                    first_blocked TIMESTAMP NOT NULL,
+                    last_blocked TIMESTAMP NOT NULL,
+                    count INTEGER DEFAULT 1
+                )
+            """)
             
             # Indexes for common queries
             conn.execute("""
@@ -414,7 +423,74 @@ class Database:
         if 'domains' in d and isinstance(d['domains'], str):
             d['domains'] = json.loads(d['domains'])
         # Convert datetime strings to datetime objects
-        for field in ['created_at', 'start_at', 'end_at', 'last_used']:
+        for field in ['created_at', 'start_at', 'end_at', 'last_used', 'first_blocked', 'last_blocked']:
             if field in d and isinstance(d[field], str):
                 d[field] = self._str_to_datetime(d[field])
         return d
+
+    def record_blocked_attempt(self, domain: str):
+        """Record a blocked attempt for a domain"""
+        now = datetime.now()
+
+        with self._get_conn() as conn:
+            # Try to insert, or update if exists
+            conn.execute("""
+                INSERT INTO blocked_attempts (domain, first_blocked, last_blocked, count)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(domain) DO UPDATE SET
+                    last_blocked = ?,
+                    count = count + 1
+            """, (domain, self._datetime_to_str(now), self._datetime_to_str(now),
+                  self._datetime_to_str(now)))
+            conn.commit()
+
+    def sync_stats_from_json(self, stats: Dict[str, int]):
+        """Sync stats from JSON file to database
+
+        Args:
+            stats: Dictionary mapping domain -> count
+        """
+        now = datetime.now()
+
+        with self._get_conn() as conn:
+            for domain, count in stats.items():
+                if count > 0:
+                    # Update database with the count from JSON
+                    conn.execute("""
+                        INSERT INTO blocked_attempts (domain, first_blocked, last_blocked, count)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(domain) DO UPDATE SET
+                            last_blocked = ?,
+                            count = count + ?
+                    """, (domain, self._datetime_to_str(now), self._datetime_to_str(now), count,
+                          self._datetime_to_str(now), count))
+            conn.commit()
+
+    def get_blocked_stats(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get blocked attempt statistics
+
+        Args:
+            limit: Maximum number of results (None for all)
+
+        Returns:
+            List of stats dictionaries with domain, count, first_blocked, last_blocked
+        """
+        with self._get_conn() as conn:
+            query = """
+                SELECT domain, count, first_blocked, last_blocked
+                FROM blocked_attempts
+                ORDER BY count DESC, last_blocked DESC
+            """
+
+            if limit:
+                query += f" LIMIT {limit}"
+
+            rows = conn.execute(query).fetchall()
+            return [self._row_to_dict(row) for row in rows]
+
+    def reset_stats(self):
+        """Clear all blocked attempt statistics"""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM blocked_attempts")
+            conn.commit()
+            logger.info("Reset all blocked attempt statistics")

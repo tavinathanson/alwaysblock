@@ -204,6 +204,63 @@ class AlwaysBlock:
                 print(f"  • {domains_str} - timing will be calculated when domain becomes available")
             print(f"")
 
+        # Show top blocked attempts
+        top_stats = self.db.get_blocked_stats(limit=5)
+        if top_stats:
+            print(f"Most blocked attempts:")
+            for stat in top_stats:
+                domain = stat['domain']
+                count = stat['count']
+                print(f"  • {domain}: {count} attempt{'s' if count != 1 else ''}")
+            print(f"")
+
+    def stats(self, reset=False):
+        """Show detailed blocked attempt statistics"""
+        if reset:
+            confirm = input("Are you sure you want to reset all statistics? (yes/no): ")
+            if confirm.lower() in ['yes', 'y']:
+                self.db.reset_stats()
+                print("✅ Statistics reset successfully")
+            else:
+                print("❌ Reset cancelled")
+            return
+
+        stats = self.db.get_blocked_stats()
+
+        if not stats:
+            print("No blocked attempts recorded yet.")
+            return
+
+        print(f"Blocked Attempt Statistics")
+        print(f"==========================")
+        print(f"")
+
+        total_attempts = sum(s['count'] for s in stats)
+        print(f"Total blocked attempts: {total_attempts}")
+        print(f"Unique domains blocked: {len(stats)}")
+        print(f"")
+
+        print(f"Top blocked domains:")
+        for i, stat in enumerate(stats[:20], 1):  # Show top 20
+            domain = stat['domain']
+            count = stat['count']
+            last_blocked = stat['last_blocked']
+
+            # Calculate time since last blocked
+            now = datetime.now()
+            time_diff = now - last_blocked
+            if time_diff.total_seconds() < 3600:
+                time_str = f"{int(time_diff.total_seconds() / 60)} min ago"
+            elif time_diff.total_seconds() < 86400:
+                time_str = f"{int(time_diff.total_seconds() / 3600)} hours ago"
+            else:
+                time_str = f"{int(time_diff.total_seconds() / 86400)} days ago"
+
+            print(f"{i:2}. {domain:40} {count:5} attempts (last: {time_str})")
+
+        print(f"")
+        print(f"Run 'alwaysblock stats --reset' to clear statistics")
+
     def is_proxy_running(self):
         """Check if proxy daemon is running"""
         if not self.pid_file.exists():
@@ -768,6 +825,13 @@ class AlwaysBlock:
 
         print("")
         print("✅ Upgrade complete!")
+
+        # Restart services if they were running before upgrade
+        if proxy_was_running or sysproxy_enabled:
+            print("")
+            print("Restarting services...")
+            self.restart()
+
         print("")
 
     def start(self):
@@ -893,6 +957,10 @@ def main():
     # Test command
     subparsers.add_parser('test', help='Run test suite')
 
+    # Stats command
+    stats_parser = subparsers.add_parser('stats', help='Show blocked attempt statistics')
+    stats_parser.add_argument('--reset', action='store_true', help='Reset all statistics')
+
     args = parser.parse_args()
 
     # Default to status if no command
@@ -936,6 +1004,8 @@ def main():
         ab.upgrade()
     elif args.command == 'test':
         ab.test()
+    elif args.command == 'stats':
+        ab.stats(reset=args.reset)
 
 
 if __name__ == '__main__':

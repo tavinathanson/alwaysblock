@@ -9,6 +9,7 @@ import threading
 import logging
 import json
 import time
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,11 @@ class HTTPProxy:
     def __init__(self, port=8905, blocked_domains_file="/tmp/alwaysblock_domains.json"):
         self.port = port
         self.blocked_domains_file = Path(blocked_domains_file)
+        self.stats_file = Path("/tmp/alwaysblock_stats.json")
         self.blocked_domains = set()
+        self.stats = {}  # domain -> count
+        self.last_attempt = {}  # domain -> timestamp (for rate limiting)
+        self.stats_lock = threading.Lock()
         self.server_socket = None
         self.running = False
         self.last_mtime = 0
@@ -50,6 +55,93 @@ class HTTPProxy:
                     self.load_blocked_domains()
         except Exception as e:
             logger.debug(f"Error checking file mtime: {e}")
+
+    def load_stats(self):
+        """Load stats from JSON file"""
+        try:
+            if self.stats_file.exists():
+                with open(self.stats_file, 'r') as f:
+                    data = json.load(f)
+                    with self.stats_lock:
+                        self.stats = data.get('stats', {})
+                    logger.info(f"Loaded stats for {len(self.stats)} domains")
+            else:
+                # Create empty stats file
+                self.save_stats()
+        except Exception as e:
+            logger.error(f"Failed to load stats: {e}")
+            with self.stats_lock:
+                self.stats = {}
+
+    def save_stats(self):
+        """Save stats to JSON file"""
+        try:
+            with self.stats_lock:
+                data = {'stats': self.stats}
+
+            # Write atomically using temp file
+            import tempfile
+            temp_fd, temp_path = tempfile.mkstemp(dir=self.stats_file.parent, suffix='.json')
+            try:
+                with os.fdopen(temp_fd, 'w') as f:
+                    json.dump(data, f, indent=2)
+
+                # Set permissions
+                os.chmod(temp_path, 0o666)
+
+                # Replace existing file
+                os.replace(temp_path, str(self.stats_file))
+            except Exception as e:
+                # Clean up temp file on error
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                raise e
+
+        except Exception as e:
+            logger.error(f"Failed to save stats: {e}")
+
+    def record_blocked_attempt(self, domain: str):
+        """Record a blocked attempt for a domain (only counts user-navigable domains)
+
+        Only counts attempts to main domains (naked or www) that users actually navigate to.
+        Ignores API/CDN subdomains like edge-chat.facebook.com, gateway.instagram.com, etc.
+        since those are background polling, not intentional user visits.
+
+        Also rate-limits to once per 5 minutes per domain to avoid counting page refreshes.
+        """
+        # Filter out API/service subdomains - only count main navigable domains
+        # Skip if domain has more than one subdomain level (e.g., api.example.com, edge-chat.facebook.com)
+        parts = domain.split('.')
+
+        # Normalize: treat www.example.com same as example.com
+        if parts[0] == 'www' and len(parts) >= 3:
+            # www.facebook.com -> facebook.com
+            normalized_domain = '.'.join(parts[1:])
+        else:
+            normalized_domain = domain
+
+        # Only count if it's a root domain (example.com) or www subdomain
+        # Skip multi-level subdomains like edge-chat.facebook.com
+        if parts[0] != 'www' and len(parts) > 2:
+            logger.debug(f"Skipping stats for API subdomain: {domain}")
+            return
+
+        now = time.time()
+
+        with self.stats_lock:
+            # Check if we've seen this domain recently (within 5 minutes)
+            last_time = self.last_attempt.get(normalized_domain, 0)
+            time_since_last = now - last_time
+
+            # Only count if it's been at least 5 minutes (300 seconds)
+            if time_since_last >= 300:
+                self.stats[normalized_domain] = self.stats.get(normalized_domain, 0) + 1
+                self.last_attempt[normalized_domain] = now
+                logger.info(f"📊 Recorded blocked attempt for {normalized_domain} (count: {self.stats[normalized_domain]})")
+            else:
+                logger.debug(f"Ignoring duplicate attempt for {normalized_domain} ({int(time_since_last)}s since last)")
 
     def should_block_domain(self, hostname):
         """Check if domain should be blocked (with subdomain matching)"""
@@ -126,6 +218,9 @@ class HTTPProxy:
             # Check if blocked
             if self.should_block_domain(hostname):
                 logger.info(f"🚫 Blocking {method} to: {hostname}")
+
+                # Record the blocked attempt
+                self.record_blocked_attempt(hostname)
 
                 # Send error response
                 if method == 'CONNECT':
@@ -256,6 +351,7 @@ class HTTPProxy:
         """Start the HTTP proxy server"""
         try:
             self.load_blocked_domains()
+            self.load_stats()
 
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -266,11 +362,18 @@ class HTTPProxy:
             logger.info(f"🚀 HTTP proxy started on 127.0.0.1:{self.port}")
             logger.info(f"📋 Blocking {len(self.blocked_domains)} domains")
 
-            # Start background thread to check for file changes
+            # Start background thread to check for file changes and save stats
             def reload_checker():
+                save_counter = 0
                 while self.running:
                     time.sleep(5)
                     self.check_and_reload()
+
+                    # Save stats every 30 seconds (6 iterations of 5s)
+                    save_counter += 1
+                    if save_counter >= 6:
+                        self.save_stats()
+                        save_counter = 0
 
             checker_thread = threading.Thread(target=reload_checker, daemon=True)
             checker_thread.start()
@@ -309,6 +412,9 @@ class HTTPProxy:
                 self.server_socket.close()
             except:
                 pass
+
+        # Save stats one final time before stopping
+        self.save_stats()
         logger.info("Proxy stopped")
 
 
