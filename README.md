@@ -100,6 +100,8 @@ This will:
 - Run the install script to apply updates
 - Restart services if they were running
 
+**Note:** If upgrading from an older version, you may need to clean up old log files once: `sudo rm -f /tmp/proxy.log /tmp/session_manager.log /tmp/alwaysblock*.pid`
+
 ---
 
 ## Quick Start
@@ -258,24 +260,7 @@ alwaysblock uninstall
 alwaysblock uninstall --remove-data
 ```
 
-### Advanced: Component-Level Control
-
-Most users should use `start`/`stop`/`restart`, but you can control components separately if needed:
-
-```bash
-# Just the proxy daemon
-alwaysblock start-proxy
-alwaysblock stop-proxy
-alwaysblock restart-proxy
-
-# Just the system proxy setting
-alwaysblock enable-proxy
-alwaysblock disable-proxy
-```
-
-All commands automatically prompt for your password when needed.
-
-For auto-start on boot configuration, see [Auto-Start Setup](#auto-start-setup).
+All commands automatically prompt for your password when needed. For auto-start on boot configuration, see [Auto-Start Setup](#auto-start-setup).
 
 ---
 
@@ -384,7 +369,7 @@ During `./install.sh`, you'll be prompted:
 Do you want to enable passwordless sudo for AlwaysBlock commands? (y/n)
 ```
 
-Answer **y** to allow commands like `sudo alwaysblock start-proxy` without password prompts.
+Answer **y** to allow commands like `alwaysblock start` without password prompts.
 
 ```
 Do you want AlwaysBlock to start automatically on boot? (y/n)
@@ -440,8 +425,7 @@ tail -f /tmp/session_manager.log
 ### Security
 
 The passwordless sudo configuration is limited to specific alwaysblock commands only:
-- `start-proxy`, `stop-proxy`, `restart-proxy`
-- `enable-proxy`, `disable-proxy`
+- `start`, `stop`, `restart`
 - `enable-autostart`, `disable-autostart`
 
 Other sudo commands will still require a password.
@@ -478,17 +462,17 @@ alwaysblock status
 tail -f /tmp/proxy.log
 ```
 
-**Restart proxy:**
+**Restart services:**
 ```bash
-alwaysblock restart-proxy
+alwaysblock restart
 ```
 
 ### System proxy not enabled
 
 **Re-enable:**
 ```bash
-alwaysblock disable-proxy
-alwaysblock enable-proxy
+alwaysblock stop
+alwaysblock start
 ```
 
 **Manual check in System Settings:**
@@ -505,7 +489,7 @@ lsof -i :8905
 
 **If not running:**
 ```bash
-alwaysblock start-proxy
+alwaysblock start
 ```
 
 ### Auto-start not working after reboot
@@ -538,16 +522,16 @@ Should show your username instead of `USERNAME`.
 
 **Test:**
 ```bash
-sudo -n alwaysblock start-proxy  # Should not prompt
+alwaysblock start  # Should not prompt for password
 ```
 
 ### Internet broken after disabling
 
 ```bash
-alwaysblock disable-proxy
+alwaysblock stop
 ```
 
-This removes the proxy from system settings and restores normal internet.
+This stops all services and restores normal internet.
 
 ---
 

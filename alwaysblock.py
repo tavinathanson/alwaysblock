@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from datetime import datetime, timedelta
 import os
+import shutil
 
 # Import the existing modules we'll reuse
 from config_manager import ConfigManager
@@ -72,9 +73,13 @@ class AlwaysBlock:
                         # Add all domains in the group
                         expanded_blocked.update(group_data['domains'])
 
+        # Get excluded domains from config
+        excluded_domains = self.config_manager.get_excluded_domains()
+
         # Convert to format expected by proxy
         domains_data = {
             'domains': sorted(list(expanded_blocked)),
+            'excluded': sorted(list(excluded_domains)),
             'expirations': {}  # Proxy doesn't use temporary blocks for now
         }
 
@@ -172,9 +177,9 @@ class AlwaysBlock:
         print(f"")
 
         if not proxy_running:
-            print("⚠️  Proxy daemon not running. Start it with: sudo alwaysblock start-proxy")
+            print("⚠️  Proxy daemon not running. Start it with: alwaysblock start")
         if not sys_proxy_enabled:
-            print("⚠️  System proxy not enabled. Enable with: sudo alwaysblock enable-proxy")
+            print("⚠️  System proxy not enabled. Enable with: alwaysblock start")
         print(f"")
 
         if active_sessions:
@@ -263,14 +268,49 @@ class AlwaysBlock:
             if result.stdout.strip():
                 pids = result.stdout.strip().split('\n')
                 for pid in pids:
+                    # Validate PID is numeric before killing
+                    if not pid.strip().isdigit():
+                        continue
                     try:
-                        subprocess.run(['kill', '-9', pid], check=False)
+                        subprocess.run(['sudo', 'kill', '-9', pid.strip()], check=False)
                         print(f"Killed existing process on port {proxy_port} (PID: {pid})")
                     except:
                         pass
                 time.sleep(0.5)
         except:
             pass
+
+        # Also check for stale http_proxy.py processes (might be running as root)
+        try:
+            result = subprocess.run(
+                ['pgrep', '-f', 'http_proxy.py'],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                for pid in pids:
+                    # Validate PID is numeric before killing
+                    if not pid.strip().isdigit():
+                        continue
+                    try:
+                        subprocess.run(['sudo', 'kill', '-9', pid.strip()], check=False)
+                        print(f"Killed stale proxy process (PID: {pid})")
+                    except:
+                        pass
+                time.sleep(0.5)
+        except:
+            pass
+
+        # Clean up stale PID files (might be left over if stop couldn't remove them)
+        for pid_file in [self.pid_file, self.session_manager_pid_file]:
+            if pid_file.exists():
+                try:
+                    pid_file.unlink()
+                except PermissionError:
+                    # Can't remove, will try again later
+                    pass
 
         # Write current domains
         self._write_domains_for_proxy()
@@ -281,6 +321,14 @@ class AlwaysBlock:
         # Log file for debugging
         log_file = self.pid_file.parent / 'proxy.log'
         log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Ensure log file exists and has correct permissions
+        log_file.touch(exist_ok=True)
+        try:
+            os.chmod(log_file, 0o666)
+        except PermissionError:
+            # Can't chmod (file owned by root), but we can write to it
+            pass
 
         # Start as daemon with logging
         with open(log_file, 'a') as log:
@@ -294,7 +342,11 @@ class AlwaysBlock:
         # Write PID file (make it world-readable/writable so status command works)
         with open(self.pid_file, 'w') as f:
             f.write(str(process.pid))
-        os.chmod(self.pid_file, 0o666)
+        try:
+            os.chmod(self.pid_file, 0o666)
+        except PermissionError:
+            # Can't chmod (file owned by root), but we can write to it
+            pass
 
         # Give it a moment to start
         time.sleep(1.0)
@@ -319,6 +371,14 @@ class AlwaysBlock:
             session_manager_script = Path(__file__).parent / 'session_manager.py'
             sm_log_file = self.session_manager_pid_file.parent / 'session_manager.log'
 
+            # Ensure log file exists and has correct permissions
+            sm_log_file.touch(exist_ok=True)
+            try:
+                os.chmod(sm_log_file, 0o666)
+            except PermissionError:
+                # Can't chmod (file owned by root), but we can write to it
+                pass
+
             with open(sm_log_file, 'a') as log:
                 sm_process = subprocess.Popen(
                     [sys.executable, str(session_manager_script)],
@@ -329,7 +389,11 @@ class AlwaysBlock:
 
             with open(self.session_manager_pid_file, 'w') as f:
                 f.write(str(sm_process.pid))
-            os.chmod(self.session_manager_pid_file, 0o666)
+            try:
+                os.chmod(self.session_manager_pid_file, 0o666)
+            except PermissionError:
+                # Can't chmod (file owned by root), but we can write to it
+                pass
 
             print(f"✅ Session manager started (PID: {sm_process.pid})")
 
@@ -340,11 +404,25 @@ class AlwaysBlock:
             try:
                 with open(self.session_manager_pid_file, 'r') as f:
                     pid = int(f.read().strip())
-                os.kill(pid, signal.SIGTERM)
-                self.session_manager_pid_file.unlink(missing_ok=True)
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except PermissionError:
+                    # Process owned by root, use sudo
+                    subprocess.run(['sudo', 'kill', '-TERM', str(pid)], check=False)
+                try:
+                    self.session_manager_pid_file.unlink(missing_ok=True)
+                except PermissionError:
+                    # PID file owned by root, leave it
+                    pass
                 print("✅ Session manager stopped")
-            except:
-                self.session_manager_pid_file.unlink(missing_ok=True)
+            except PermissionError:
+                # Can't read PID file - probably doesn't exist or wrong perms
+                pass
+            except Exception:
+                try:
+                    self.session_manager_pid_file.unlink(missing_ok=True)
+                except:
+                    pass
 
         # Stop proxy
         if not self.pid_file.exists():
@@ -356,7 +434,11 @@ class AlwaysBlock:
                 pid = int(f.read().strip())
 
             # Send SIGTERM
-            os.kill(pid, signal.SIGTERM)
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except PermissionError:
+                # Process owned by root, use sudo
+                subprocess.run(['sudo', 'kill', '-TERM', str(pid)], check=False)
 
             # Wait for it to stop
             for _ in range(10):
@@ -367,12 +449,19 @@ class AlwaysBlock:
                     break
 
             # Remove PID file
-            self.pid_file.unlink(missing_ok=True)
+            try:
+                self.pid_file.unlink(missing_ok=True)
+            except PermissionError:
+                # PID file owned by root, leave it - will be cleaned up next start
+                pass
 
             print("✅ Proxy stopped")
 
         except (ValueError, ProcessLookupError) as e:
-            self.pid_file.unlink(missing_ok=True)
+            try:
+                self.pid_file.unlink(missing_ok=True)
+            except PermissionError:
+                pass
             print(f"Proxy was not running")
 
     def enable_system_proxy(self):
@@ -645,7 +734,10 @@ class AlwaysBlock:
             if result.stdout.strip():
                 pids = result.stdout.strip().split('\n')
                 for pid in pids:
-                    subprocess.run(['kill', '-9', pid], check=False, stderr=subprocess.DEVNULL)
+                    # Validate PID is numeric before killing
+                    if not pid.strip().isdigit():
+                        continue
+                    subprocess.run(['kill', '-9', pid.strip()], check=False, stderr=subprocess.DEVNULL)
                 print("Killed remaining proxy processes...")
         except:
             pass
@@ -686,9 +778,9 @@ class AlwaysBlock:
         if old_app.exists():
             print("Removing old Network Extension app...")
             try:
-                subprocess.run(['rm', '-rf', str(old_app)], check=False)
-            except:
-                pass
+                shutil.rmtree(old_app)
+            except Exception as e:
+                print(f"Warning: Could not remove {old_app}: {e}")
 
         if remove_data:
             print("Removing configuration and data...")
@@ -698,7 +790,11 @@ class AlwaysBlock:
 
             for dir_path in [config_dir, data_dir, venv_dir]:
                 if dir_path.exists():
-                    subprocess.run(['rm', '-rf', str(dir_path)], check=False)
+                    try:
+                        shutil.rmtree(dir_path)
+                        print(f"  Removed: {dir_path}")
+                    except Exception as e:
+                        print(f"  Warning: Could not remove {dir_path}: {e}")
 
             print("Configuration and data removed.")
         else:
@@ -729,6 +825,7 @@ class AlwaysBlock:
             sys.exit(1)
 
         print("Fetching latest changes...")
+        already_up_to_date = False
         try:
             result = subprocess.run(
                 ['git', 'pull'],
@@ -740,8 +837,8 @@ class AlwaysBlock:
             print(result.stdout)
 
             if "Already up to date" in result.stdout:
+                already_up_to_date = True
                 print("✅ Already on latest version")
-                return
 
         except subprocess.CalledProcessError as e:
             print(f"Error: Failed to pull latest changes")
@@ -752,19 +849,38 @@ class AlwaysBlock:
         proxy_was_running = self.is_proxy_running()
         sysproxy_enabled = self.system_proxy.get_status().get('enabled', False)
 
-        print("Running install script to apply updates...")
-        install_script = script_dir / 'install.sh'
+        # Only run install script if there were updates
+        if not already_up_to_date:
+            print("Running install script to apply updates...")
+            install_script = script_dir / 'install.sh'
 
-        if not install_script.exists():
-            print("Error: install.sh not found")
-            sys.exit(1)
+            if not install_script.exists():
+                print("Error: install.sh not found")
+                sys.exit(1)
 
-        try:
-            # Run install script - it will preserve config and restart services if needed
-            subprocess.run(['bash', str(install_script)], cwd=script_dir, check=True)
-        except subprocess.CalledProcessError:
-            print("Error: Installation failed")
-            sys.exit(1)
+            try:
+                # Run install script - it will preserve config and restart services if needed
+                subprocess.run(['bash', str(install_script)], cwd=script_dir, check=True)
+            except subprocess.CalledProcessError:
+                print("Error: Installation failed")
+                sys.exit(1)
+
+        # Always restart services after upgrade
+        print("")
+
+        # If no changes, ask if user wants to restart
+        should_restart = True
+        if already_up_to_date:
+            try:
+                response = input("No changes detected. Restart services anyway? [Y/n]: ").strip().lower()
+                should_restart = response in ['', 'y', 'yes']
+            except (EOFError, KeyboardInterrupt):
+                print("\nSkipping restart")
+                should_restart = False
+
+        if should_restart:
+            print("Restarting services...")
+            self.restart()
 
         print("")
         print("✅ Upgrade complete!")

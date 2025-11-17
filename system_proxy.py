@@ -53,23 +53,20 @@ class SystemProxy:
             try:
                 # Set bypass domains first
                 subprocess.run(
-                    ['networksetup', '-setproxybypassdomains', service] + bypass_domains,
-                    check=True,
-                    capture_output=True
+                    ['sudo', 'networksetup', '-setproxybypassdomains', service] + bypass_domains,
+                    check=True
                 )
 
                 # Set HTTP proxy
                 subprocess.run(
-                    ['networksetup', '-setwebproxy', service, self.proxy_host, str(self.proxy_port)],
-                    check=True,
-                    capture_output=True
+                    ['sudo', 'networksetup', '-setwebproxy', service, self.proxy_host, str(self.proxy_port)],
+                    check=True
                 )
 
                 # Set HTTPS proxy
                 subprocess.run(
-                    ['networksetup', '-setsecurewebproxy', service, self.proxy_host, str(self.proxy_port)],
-                    check=True,
-                    capture_output=True
+                    ['sudo', 'networksetup', '-setsecurewebproxy', service, self.proxy_host, str(self.proxy_port)],
+                    check=True
                 )
 
                 logger.info(f"Enabled proxy for: {service}")
@@ -89,23 +86,20 @@ class SystemProxy:
             try:
                 # Disable HTTP proxy
                 subprocess.run(
-                    ['networksetup', '-setwebproxystate', service, 'off'],
-                    check=True,
-                    capture_output=True
+                    ['sudo', 'networksetup', '-setwebproxystate', service, 'off'],
+                    check=True
                 )
 
                 # Disable HTTPS proxy
                 subprocess.run(
-                    ['networksetup', '-setsecurewebproxystate', service, 'off'],
-                    check=True,
-                    capture_output=True
+                    ['sudo', 'networksetup', '-setsecurewebproxystate', service, 'off'],
+                    check=True
                 )
 
                 # Clear bypass domains (restore to empty)
                 subprocess.run(
-                    ['networksetup', '-setproxybypassdomains', service, ''],
-                    check=True,
-                    capture_output=True
+                    ['sudo', 'networksetup', '-setproxybypassdomains', service, ''],
+                    check=True
                 )
 
                 logger.info(f"Disabled proxy for: {service}")

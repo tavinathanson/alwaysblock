@@ -21,6 +21,7 @@ class HTTPProxy:
         self.port = port
         self.blocked_domains_file = Path(blocked_domains_file)
         self.blocked_domains = set()
+        self.excluded_domains = set()
         self.server_socket = None
         self.running = False
         self.last_mtime = 0
@@ -32,14 +33,17 @@ class HTTPProxy:
                 with open(self.blocked_domains_file, 'r') as f:
                     data = json.load(f)
                     self.blocked_domains = set(data.get('domains', []))
+                    self.excluded_domains = set(data.get('excluded', []))
                     self.last_mtime = self.blocked_domains_file.stat().st_mtime
-                    logger.info(f"Loaded {len(self.blocked_domains)} blocked domains")
+                    logger.info(f"Loaded {len(self.blocked_domains)} blocked domains, {len(self.excluded_domains)} excluded")
             else:
                 logger.warning(f"Blocked domains file not found: {self.blocked_domains_file}")
                 self.blocked_domains = set()
+                self.excluded_domains = set()
         except Exception as e:
             logger.error(f"Failed to load blocked domains: {e}")
             self.blocked_domains = set()
+            self.excluded_domains = set()
 
     def check_and_reload(self):
         """Check if domains file changed and reload if needed"""
@@ -56,6 +60,23 @@ class HTTPProxy:
         if not hostname:
             return False
 
+        # First check if domain is explicitly excluded (takes precedence)
+        if hostname in self.excluded_domains:
+            return False
+
+        # Check without www prefix for exclusions
+        if hostname.startswith('www.'):
+            if hostname[4:] in self.excluded_domains:
+                return False
+
+        # Check if any parent domain is excluded
+        parts = hostname.split('.')
+        for i in range(len(parts)):
+            domain = '.'.join(parts[i:])
+            if domain in self.excluded_domains:
+                return False
+
+        # Now check if domain should be blocked
         # Direct match
         if hostname in self.blocked_domains:
             return True
@@ -66,7 +87,6 @@ class HTTPProxy:
                 return True
 
         # Check parent domains (subdomain matching)
-        parts = hostname.split('.')
         for i in range(len(parts)):
             domain = '.'.join(parts[i:])
             if domain in self.blocked_domains:

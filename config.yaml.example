@@ -2,6 +2,12 @@
 
 default_profile: unblock
 
+# Globally excluded domains (always allowed, even if parent domain is blocked)
+excluded_domains:
+  - accounts.google.com   # Allow Google accounts (for GSuite login)
+  - myaccount.google.com  # Allow Google account management 
+  - accounts.youtube.com  # Allow YouTube accounts (for GSuite login)
+
 domains:
   facebook.com:
   instagram.com:
@@ -9,6 +15,7 @@ domains:
   x.com:
   reddit.com:
   youtube.com:
+  google.com:
 
 profiles:
   # Standard: 5 min wait, 30 min access

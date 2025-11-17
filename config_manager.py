@@ -38,7 +38,7 @@ class ConfigManager:
         """Get all domains defined in configuration"""
         domains = []
         domain_config = self._config_data.get('domains', {})
-        
+
         for name, config in domain_config.items():
             if isinstance(config, dict) and 'domains' in config:
                 # Domain group
@@ -46,8 +46,15 @@ class ConfigManager:
             else:
                 # Individual domain
                 domains.append(name)
-                
+
         return list(set(domains))
+
+    def get_excluded_domains(self) -> List[str]:
+        """Get all globally excluded domains from configuration"""
+        excluded = self._config_data.get('excluded_domains', [])
+        if isinstance(excluded, list):
+            return list(set(excluded))
+        return []
     
     def resolve_domains(self, targets: List[str]) -> tuple[List[str], List[str]]:
         """Resolve domain names/groups to actual domains
