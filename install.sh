@@ -115,12 +115,20 @@ mkdir -p "$DATA_DIR"
 # This prevents database permission issues when the proxy daemon creates it
 chown -R "$(whoami):staff" "$DATA_DIR"
 
-# Create symlink to example config if needed (preserve existing config)
-if [ ! -e "$CONFIG_DIR/config.yaml" ]; then
+# Copy example config if needed (preserve existing config)
+# If config is a symlink (old behavior), convert it to a real file
+if [ -L "$CONFIG_DIR/config.yaml" ]; then
+    echo "Converting symlinked config to standalone file..."
+    TEMP_CONFIG=$(mktemp)
+    cp -L "$CONFIG_DIR/config.yaml" "$TEMP_CONFIG"
+    rm "$CONFIG_DIR/config.yaml"
+    mv "$TEMP_CONFIG" "$CONFIG_DIR/config.yaml"
+    echo "Config is now a standalone file (no longer a symlink)"
+elif [ ! -e "$CONFIG_DIR/config.yaml" ]; then
     if [ -f "$SCRIPT_DIR/config.yaml.example" ]; then
         echo "Creating default configuration..."
-        ln -sf "$SCRIPT_DIR/config.yaml.example" "$CONFIG_DIR/config.yaml"
-        echo "Config symlinked to: $SCRIPT_DIR/config.yaml.example"
+        cp "$SCRIPT_DIR/config.yaml.example" "$CONFIG_DIR/config.yaml"
+        echo "Config copied from: $SCRIPT_DIR/config.yaml.example"
     fi
 else
     echo "Preserving existing configuration..."
