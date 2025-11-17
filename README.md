@@ -151,28 +151,23 @@ domains:
   reddit.com:
     tags: [social, distracting]
 
+  youtube.com:
+    tags: [entertainment, distracting]
+
+  facebook.com:
+    tags: [social, distracting]
+
+  instagram.com:
+    tags: [social, distracting]
+
+  twitter.com:
+    tags: [social, distracting]
+
+  x.com:
+    tags: [social, distracting]
+
   netflix.com:
     tags: [ultra_distracting, entertainment]
-
-  # Domain groups (with related domains/CDNs)
-  google:
-    domains:
-      - google.com
-      - gmail.com
-      - mail.google.com
-      - calendar.google.com
-      - drive.google.com
-      - googleusercontent.com
-      - gstatic.com
-    tags: [work, productivity]
-
-  slack:
-    domains:
-      - slack.com
-      - app.slack.com
-      - slack-edge.com
-      - slack-imgs.com
-    tags: [work, communication]
 
 profiles:
   # Default unblock profile
@@ -187,8 +182,6 @@ profiles:
     tag_rules:
       - tags: [ultra_distracting]
         wait_override: 30  # 30 min wait for Netflix
-      - tags: [work, communication]
-        wait_override: 1   # 1 min wait for Slack/Gmail
 
   # Quick access
   quick:
@@ -242,13 +235,13 @@ alwaysblock unblock reddit
 alwaysblock unblock reddit youtube
 
 # Use a specific profile
-alwaysblock unblock -p quick gmail
+alwaysblock unblock -p quick reddit
 
 # Use bypass profile
 alwaysblock unblock -p bypass facebook
 ```
 
-When you unblock multiple domains at once, each creates a separate session with its own timing. Sessions are **order-dependent**: later domains get higher concurrent penalties. However, sessions with tag overrides (like `gmail` and `slack` with 1-min wait) don't count toward the penalty for other sessions.
+When you unblock multiple domains at once, each creates a separate session with its own timing. Sessions are **order-dependent**: later domains get higher concurrent penalties.
 
 ### Maintenance
 
@@ -302,17 +295,14 @@ domains:
   reddit.com:
     tags: [social, distracting]
 
-  slack:
-    domains: [slack.com]
-    tags: [work, communication]
+  netflix.com:
+    tags: [ultra_distracting, entertainment]
 
 profiles:
   unblock:
     tag_rules:
-      - tags: [work, communication]
-        wait_override: 1  # Quick access for work tools
       - tags: [ultra_distracting]
-        wait_override: 30  # Long delay for distracting sites
+        wait_override: 30  # Long delay for Netflix
 ```
 
 ### Concurrent Penalty
@@ -329,17 +319,7 @@ alwaysblock unblock reddit youtube twitter
 # twitter: 15 min (base + 2×5 penalty)
 ```
 
-**Tag override sessions don't count toward the penalty:**
-
-```bash
-alwaysblock unblock gmail slack facebook instagram
-
-# Results:
-# gmail:     1 min (override, doesn't count)
-# slack:     1 min (override, doesn't count)
-# facebook:  5 min (base + 0 penalty)
-# instagram: 10 min (base + 1×5 penalty from facebook only)
-```
+This makes you think twice before opening multiple distracting sites at once.
 
 ### Queueing Behavior
 
@@ -634,7 +614,7 @@ The code is split into a few Python scripts:
 
 ### Implementation Details
 
-**Subdomain matching**: If you block `google.com`, it also blocks `mail.google.com` and `drive.google.com`, but not `googleusercontent.com` (different root domain).
+**Subdomain matching**: If you block `reddit.com`, it also blocks `old.reddit.com` and `www.reddit.com`, but not `redd.it` (different root domain).
 
 **Domain groups**: Sites often use multiple CDNs, so you can group related domains:
 
@@ -670,9 +650,9 @@ Quick test that it works:
 
 Test that `block-all` kills active sessions:
 
-1. Open Gmail in Chrome (while it's not blocked)
+1. Unblock and open Reddit in Chrome
 2. Run `alwaysblock block-all`
-3. Refresh the Gmail tab
+3. Refresh the Reddit tab
 4. Should get a connection error even though the tab was already open
 
 Automated tests:

@@ -9,12 +9,12 @@ excluded_domains:
   - accounts.youtube.com  # Allow YouTube accounts (for GSuite login)
 
 domains:
+  reddit.com:
+  youtube.com:
   facebook.com:
   instagram.com:
   twitter.com:
   x.com:
-  reddit.com:
-  youtube.com:
 
 profiles:
   # Standard: 5 min wait, 30 min access
