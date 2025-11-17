@@ -156,18 +156,24 @@ echo ""
 echo "✅ Installation complete!"
 echo ""
 
-# Ask about passwordless sudo
-echo ""
-echo "Do you want to enable passwordless sudo for AlwaysBlock commands?"
-echo "(Allows commands like 'sudo alwaysblock start' without password)"
-read -p "Enable passwordless sudo? [y/N]: " -r PASSWORDLESS_RESPONSE
+# Ask about passwordless sudo (only if not already configured)
+SUDOERS_FILE="/etc/sudoers.d/alwaysblock"
+if [ ! -f "$SUDOERS_FILE" ]; then
+    echo ""
+    echo "Do you want to enable passwordless sudo for AlwaysBlock commands?"
+    echo "(Allows commands like 'alwaysblock start' without password)"
+    read -p "Enable passwordless sudo? [y/N]: " -r PASSWORDLESS_RESPONSE
+else
+    echo ""
+    echo "Passwordless sudo already configured, skipping..."
+    PASSWORDLESS_RESPONSE="n"
+fi
 
 if [[ "$PASSWORDLESS_RESPONSE" =~ ^[Yy]$ ]]; then
     echo ""
     echo "Setting up passwordless sudo..."
 
     # Create sudoers file with username substitution
-    SUDOERS_FILE="/etc/sudoers.d/alwaysblock"
     CURRENT_USER=$(whoami)
 
     # Create temporary file with username replaced
@@ -187,15 +193,30 @@ if [[ "$PASSWORDLESS_RESPONSE" =~ ^[Yy]$ ]]; then
     echo ""
 fi
 
-# Ask about auto-start on boot
-echo ""
-echo "Do you want AlwaysBlock to start automatically on boot?"
-echo "(Services will start when your Mac restarts)"
-read -p "Enable auto-start on boot? [y/N]: " -r AUTOSTART_RESPONSE
+# Ask about auto-start on boot (only if not already configured)
+PLIST_PATH="/Library/LaunchDaemons/com.alwaysblock.daemon.plist"
+AUTOSTART_ALREADY_ENABLED=false
+if [ ! -f "$PLIST_PATH" ]; then
+    echo ""
+    echo "Do you want AlwaysBlock to start automatically on boot?"
+    echo "(Services will start when your Mac restarts)"
+    read -p "Enable auto-start on boot? [y/N]: " -r AUTOSTART_RESPONSE
+else
+    echo ""
+    echo "Auto-start already configured, reloading..."
+    AUTOSTART_RESPONSE="y"
+    AUTOSTART_ALREADY_ENABLED=true
+fi
 
 if [[ "$AUTOSTART_RESPONSE" =~ ^[Yy]$ ]]; then
     echo ""
-    echo "Setting up auto-start on boot..."
+    if [ "$AUTOSTART_ALREADY_ENABLED" = true ]; then
+        echo "Updating auto-start configuration..."
+        # Unload existing daemon
+        sudo launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    else
+        echo "Setting up auto-start on boot..."
+    fi
 
     # Create daemon script with proper venv path substitution
     DAEMON_SCRIPT="/usr/local/bin/alwaysblock-daemon"
@@ -219,15 +240,20 @@ if [[ "$AUTOSTART_RESPONSE" =~ ^[Yy]$ ]]; then
 
     echo "✅ Auto-start configured!"
     echo ""
-    echo "Waiting for services to start..."
+    echo "Waiting 30 seconds for services to start..."
 
-    # Wait for daemon to start services (max 10 seconds)
-    for i in {1..10}; do
+    # Wait for daemon to start services (daemon waits 5s, then needs time to start)
+    for i in {1..30}; do
+        printf "."
         sleep 1
-        if lsof -i :8905 >/dev/null 2>&1; then
+        if [ $i -ge 10 ] && lsof -i :8905 >/dev/null 2>&1; then
+            # Found proxy running, wait a bit more for system proxy to enable
+            printf "\nProxy detected, finalizing...\n"
+            sleep 2
             break
         fi
     done
+    printf "\n"
 else
     # Manual start
     # Restart services if they were running

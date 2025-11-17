@@ -149,12 +149,14 @@ class AlwaysBlock:
         waiting_sessions = self.db.get_waiting_sessions()
         all_configured = self.config_manager.get_all_configured_domains()
 
-        # Collect unblocked domains
+        # Collect unblocked domains from active sessions
         unblocked_domains = set()
         for session in active_sessions:
             unblocked_domains.update(session['domains'])
 
-        blocked_count = len(all_configured) - len(unblocked_domains)
+        # Only count domains that are actually configured (intersection)
+        unblocked_configured = unblocked_domains.intersection(set(all_configured))
+        blocked_count = len(all_configured) - len(unblocked_configured)
 
         print(f"AlwaysBlock Status")
         print(f"==================")
