@@ -305,6 +305,29 @@ class AlwaysBlock:
         except:
             pass
 
+        # Also check for stale session_manager.py processes (might be running as root)
+        try:
+            result = subprocess.run(
+                ['pgrep', '-f', 'session_manager.py'],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                for pid in pids:
+                    # Validate PID is numeric before killing
+                    if not pid.strip().isdigit():
+                        continue
+                    try:
+                        subprocess.run(['sudo', 'kill', '-9', pid.strip()], check=False)
+                        print(f"Killed stale session manager process (PID: {pid})")
+                    except:
+                        pass
+                time.sleep(0.5)
+        except:
+            pass
+
         # Clean up stale PID files (might be left over if stop couldn't remove them)
         for pid_file in [self.pid_file, self.session_manager_pid_file]:
             if pid_file.exists():
