@@ -32,6 +32,7 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     profile TEXT NOT NULL,
                     domains TEXT NOT NULL,  -- JSON array
+                    target_name TEXT,       -- Original target name(s) requested (e.g., 'slack', 'gmail', or 'all')
                     status TEXT NOT NULL,   -- 'waiting_for_domain', 'pending', 'active', 'completed'
                     wait_minutes INTEGER NOT NULL,
                     duration_minutes INTEGER NOT NULL,
@@ -73,6 +74,14 @@ class Database:
                 conn.execute("ALTER TABLE sessions ADD COLUMN has_override INTEGER DEFAULT 0")
                 logger.info("Added has_override column to sessions table")
 
+            # Migration: Add target_name column if it doesn't exist
+            try:
+                conn.execute("SELECT target_name FROM sessions LIMIT 1")
+            except sqlite3.OperationalError:
+                # Column doesn't exist, add it
+                conn.execute("ALTER TABLE sessions ADD COLUMN target_name TEXT")
+                logger.info("Added target_name column to sessions table")
+
             conn.commit()
     
     @contextmanager
@@ -95,7 +104,8 @@ class Database:
         return datetime.fromisoformat(s)
     
     def create_session(self, profile: str, domains: List[str],
-                      wait_minutes: int, duration_minutes: int, has_override: bool = False) -> int:
+                      wait_minutes: int, duration_minutes: int, has_override: bool = False,
+                      target_name: str = None) -> int:
         """Create a new session
 
         If any of the domains are already in an active or pending session, this new session
@@ -109,6 +119,7 @@ class Database:
             wait_minutes: Minutes to wait before starting (stored for later use)
             duration_minutes: Minutes the session lasts
             has_override: True if this session has a tag-based wait override applied
+            target_name: Original target name(s) requested (e.g., 'slack', 'gmail', or 'all')
         """
         now = datetime.now()
 
@@ -133,12 +144,13 @@ class Database:
         with self._get_conn() as conn:
             cursor = conn.execute("""
                 INSERT INTO sessions
-                (profile, domains, status, wait_minutes, duration_minutes,
+                (profile, domains, target_name, status, wait_minutes, duration_minutes,
                  created_at, start_at, end_at, has_override)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 profile,
                 json.dumps(domains),
+                target_name,
                 status,
                 wait_minutes,
                 duration_minutes,
@@ -150,12 +162,16 @@ class Database:
             conn.commit()
 
             session_id = cursor.lastrowid
-            logger.info(f"Created session {session_id} (status: {status}) for profile '{profile}' with {len(domains)} domains")
+            logger.info(f"Created session {session_id} (status: {status}, target: {target_name}) for profile '{profile}' with {len(domains)} domains")
 
             return session_id
 
     def _check_domain_in_use(self, domains: List[str]) -> bool:
-        """Check if any of the given domains are in active/pending sessions (NOT waiting)"""
+        """Check if the exact same set of domains is in active/pending sessions (NOT waiting)
+
+        Changed to only queue when requesting the exact same set of domains,
+        not just any overlap. This allows concurrent sessions for different targets.
+        """
         if not domains:
             return False
 
@@ -168,7 +184,8 @@ class Database:
             request_domains = set(domains)
             for row in rows:
                 session_domains = set(json.loads(row['domains']))
-                if request_domains & session_domains:
+                # Only queue if it's the exact same set of domains
+                if request_domains == session_domains:
                     return True
 
             return False
@@ -253,7 +270,7 @@ class Database:
             # Check if this session's domains are still in use
             domains = session['domains']
 
-            # Check if domains are in use by OTHER sessions (not this one)
+            # Check if exact same set of domains is in use by OTHER sessions (not this one)
             domain_still_in_use = False
             with self._get_conn() as conn:
                 rows = conn.execute("""
@@ -265,7 +282,8 @@ class Database:
                 request_domains = set(domains)
                 for row in rows:
                     session_domains = set(json.loads(row['domains']))
-                    if request_domains & session_domains:
+                    # Only wait if it's the exact same set of domains
+                    if request_domains == session_domains:
                         domain_still_in_use = True
                         break
 

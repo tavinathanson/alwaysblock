@@ -187,28 +187,31 @@ class AlwaysBlock:
         if active_sessions:
             print(f"Active unblock sessions ({len(active_sessions)}):")
             for session in active_sessions:
-                domains_str = ', '.join(session['domains'])
+                # Use target_name if available, otherwise show all domains
+                display_name = session.get('target_name') or ', '.join(session['domains'])
                 end_at = session['end_at']
                 remaining = (end_at - datetime.now()).total_seconds()
                 minutes = int(remaining / 60)
-                print(f"  • {domains_str} - {minutes} minutes remaining")
+                print(f"  #{session['id']}: {display_name} - {minutes} minutes remaining")
             print(f"")
 
         if pending_sessions:
             print(f"Pending unblock sessions ({len(pending_sessions)}):")
             for session in pending_sessions:
-                domains_str = ', '.join(session['domains'])
+                # Use target_name if available, otherwise show all domains
+                display_name = session.get('target_name') or ', '.join(session['domains'])
                 start_at = session['start_at']
                 wait_time = (start_at - datetime.now()).total_seconds()
                 minutes = int(wait_time / 60)
-                print(f"  • {domains_str} - {minutes} minutes until accessible")
+                print(f"  #{session['id']}: {display_name} - {minutes} minutes until accessible")
             print(f"")
 
         if waiting_sessions:
             print(f"Queued (waiting for domain to be free) ({len(waiting_sessions)}):")
             for session in waiting_sessions:
-                domains_str = ', '.join(session['domains'])
-                print(f"  • {domains_str} - timing will be calculated when domain becomes available")
+                # Use target_name if available, otherwise show all domains
+                display_name = session.get('target_name') or ', '.join(session['domains'])
+                print(f"  #{session['id']}: {display_name} - timing will be calculated when domain becomes available")
             print(f"")
 
     def is_proxy_running(self):
@@ -569,13 +572,29 @@ class AlwaysBlock:
             # Calculate timing for this specific target
             timing = self.config_manager.calculate_timing(profile_name, [target])
 
+            # For immediate access profiles (wait=0), cancel any overlapping existing sessions
+            # This allows bypass to work immediately even if domains are already in use
+            if timing['wait'] == 0:
+                all_sessions = (self.db.get_active_sessions() +
+                               self.db.get_pending_sessions() +
+                               self.db.get_waiting_sessions())
+
+                domains_set = set(domains)
+                for session in all_sessions:
+                    session_domains = set(session['domains'])
+                    if domains_set & session_domains:  # If any overlap
+                        self.db.cancel_session(session['id'])
+                        display_name = session.get('target_name') or ', '.join(session['domains'])
+                        print(f"Cancelled overlapping session #{session['id']}: {display_name}")
+
             # Create session - it will automatically queue if these domains are already active/pending
             session_id = self.db.create_session(
                 profile=profile_name,
                 domains=domains,
                 wait_minutes=timing['wait'],
                 duration_minutes=timing['duration'],
-                has_override=timing['has_override']
+                has_override=timing['has_override'],
+                target_name=target
             )
 
             session_ids.append(session_id)
@@ -585,7 +604,6 @@ class AlwaysBlock:
             session = next(s for s in all_sessions if s['id'] == session_id)
 
             print(f"Session {session_id}: {target}")
-            print(f"  Domains: {', '.join(domains)}")
 
             if session['status'] == 'waiting_for_domain':
                 # Waiting sessions don't have start/end times yet
@@ -629,14 +647,62 @@ class AlwaysBlock:
 
         print("All domains are now blocked")
 
-    def cancel(self, session_id):
-        """Cancel a session"""
-        if self.db.cancel_session(session_id):
-            print(f"Cancelled session {session_id}")
-            # Update JSON for proxy
+    def cancel(self, identifier):
+        """Cancel session(s) by ID, target name, or domain
+
+        Args:
+            identifier: Can be:
+                - Session ID (numeric)
+                - Target name (e.g., 'slack', 'gmail')
+                - Domain name (e.g., 'slack.com')
+        """
+        # Try to parse as session ID first
+        try:
+            session_id = int(identifier)
+            if self.db.cancel_session(session_id):
+                print(f"Cancelled session #{session_id}")
+                self._write_domains_for_proxy()
+            else:
+                print(f"Error: Session #{session_id} not found or already completed")
+                sys.exit(1)
+            return
+        except ValueError:
+            # Not a number, treat as target/domain name
+            pass
+
+        # Look for sessions by target name or domain
+        all_sessions = (self.db.get_active_sessions() +
+                       self.db.get_pending_sessions() +
+                       self.db.get_waiting_sessions())
+
+        matching_sessions = []
+        for session in all_sessions:
+            # Check target name match
+            if session.get('target_name') == identifier:
+                matching_sessions.append(session)
+            # Check if identifier matches any domain in the session
+            elif identifier in session['domains']:
+                matching_sessions.append(session)
+
+        if not matching_sessions:
+            print(f"Error: No active sessions found for '{identifier}'")
+            print(f"Hint: Use 'alwaysblock status' to see active sessions")
+            sys.exit(1)
+
+        # Cancel all matching sessions
+        cancelled_count = 0
+        for session in matching_sessions:
+            if self.db.cancel_session(session['id']):
+                display_name = session.get('target_name') or ', '.join(session['domains'])
+                print(f"Cancelled session #{session['id']}: {display_name}")
+                cancelled_count += 1
+
+        if cancelled_count > 0:
             self._write_domains_for_proxy()
+            if cancelled_count > 1:
+                print(f"Total: {cancelled_count} sessions cancelled")
         else:
-            print(f"Error: Session {session_id} not found or already completed")
+            print(f"Error: Failed to cancel sessions")
             sys.exit(1)
 
     def enable_autostart(self):
@@ -1018,7 +1084,7 @@ def main():
 
     # Cancel command
     cancel_parser = subparsers.add_parser('cancel', help='Cancel an unblock session')
-    cancel_parser.add_argument('session_id', type=int, help='Session ID to cancel')
+    cancel_parser.add_argument('identifier', help='Session ID, target name, or domain to cancel')
 
     # Auto-start management
     subparsers.add_parser('enable-autostart', help='Enable auto-start on boot (requires sudo)')
@@ -1066,7 +1132,7 @@ def main():
     elif args.command == 'unblock':
         ab.unblock(args.targets, args.profile)
     elif args.command == 'cancel':
-        ab.cancel(args.session_id)
+        ab.cancel(args.identifier)
     elif args.command == 'enable-autostart':
         ab.enable_autostart()
     elif args.command == 'disable-autostart':

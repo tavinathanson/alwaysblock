@@ -79,7 +79,7 @@ def test_different_domains_dont_queue(db):
 
 
 def test_overlapping_domains_queue(db):
-    """Test that sessions with any overlapping domains use waiting_for_domain"""
+    """Test that only exact same domain sets queue, overlapping but different sets are concurrent"""
     # Create session for youtube only
     session1 = db.create_session(
         profile='test',
@@ -91,7 +91,7 @@ def test_overlapping_domains_queue(db):
     # First session should be pending
     assert len(db.get_pending_sessions()) == 1, "First session should be pending"
 
-    # Create another session for youtube (should be waiting)
+    # Create another session for youtube (exact same - should queue)
     session2 = db.create_session(
         profile='test',
         domains=['youtube.com'],
@@ -100,6 +100,7 @@ def test_overlapping_domains_queue(db):
     )
 
     # Create session with multiple domains, one of which overlaps (youtube)
+    # This should NOT queue because it's a different set of domains
     session3 = db.create_session(
         profile='test',
         domains=['youtube.com', 'twitter.com'],
@@ -107,13 +108,16 @@ def test_overlapping_domains_queue(db):
         duration_minutes=5
     )
 
-    # Both session2 and session3 should be waiting (youtube is in use)
+    # Only session2 should be waiting (exact match)
+    # Session3 should be pending (different set, allowed concurrently)
     waiting_sessions = db.get_waiting_sessions()
-    assert len(waiting_sessions) == 2, "Sessions 2 and 3 should be waiting_for_domain"
+    assert len(waiting_sessions) == 1, "Only session 2 should be waiting_for_domain"
+    assert waiting_sessions[0]['id'] == session2, "Session 2 should be waiting"
 
-    waiting_ids = [s['id'] for s in waiting_sessions]
-    assert session2 in waiting_ids, "Session 2 should be waiting"
-    assert session3 in waiting_ids, "Session 3 should be waiting"
+    # Session 3 should be pending (different domain set, allowed concurrently)
+    pending_sessions = db.get_pending_sessions()
+    pending_ids = [s['id'] for s in pending_sessions]
+    assert session3 in pending_ids, "Session 3 should be pending (different domain set)"
 
 
 def test_multiple_queued_sessions(db):
