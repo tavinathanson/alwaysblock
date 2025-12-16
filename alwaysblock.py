@@ -629,6 +629,23 @@ class AlwaysBlock:
         else:
             print(f"✅ Created 1 session")
 
+    def pause(self):
+        """Manually pause blocking (fallback if auto-detection doesn't work)"""
+        domains_data = {'domains': [], 'excluded': [], 'paused': True}
+        try:
+            with open(self.json_path, 'w') as f:
+                json.dump(domains_data, f)
+            print("✅ Blocking paused")
+            print("   Run 'alwaysblock resume' to restore blocking")
+        except Exception as e:
+            print(f"Error: Could not write to {self.json_path}: {e}")
+            sys.exit(1)
+
+    def resume(self):
+        """Resume blocking after manual pause"""
+        self._write_domains_for_proxy()
+        print("✅ Blocking resumed")
+
     def block_all(self):
         """Block all domains immediately"""
         # Cancel all sessions (active, pending, and waiting)
@@ -1082,6 +1099,10 @@ def main():
     # Block all command
     subparsers.add_parser('block-all', help='Block all domains immediately')
 
+    # Pause/resume (manual fallback for captive portal)
+    subparsers.add_parser('pause', help='Manually pause blocking (for captive portal issues)')
+    subparsers.add_parser('resume', help='Resume blocking after manual pause')
+
     # Cancel command
     cancel_parser = subparsers.add_parser('cancel', help='Cancel an unblock session')
     cancel_parser.add_argument('identifier', help='Session ID, target name, or domain to cancel')
@@ -1129,6 +1150,10 @@ def main():
         ab.restart()
     elif args.command == 'block-all':
         ab.block_all()
+    elif args.command == 'pause':
+        ab.pause()
+    elif args.command == 'resume':
+        ab.resume()
     elif args.command == 'unblock':
         ab.unblock(args.targets, args.profile)
     elif args.command == 'cancel':

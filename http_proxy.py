@@ -9,6 +9,7 @@ import threading
 import logging
 import json
 import time
+import urllib.request
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,8 @@ class HTTPProxy:
         self.server_socket = None
         self.running = False
         self.last_mtime = 0
+        self.captive_portal_mode = False
+        self.last_captive_check = 0
 
     def load_blocked_domains(self):
         """Load blocked domains from JSON file"""
@@ -55,9 +58,38 @@ class HTTPProxy:
         except Exception as e:
             logger.debug(f"Error checking file mtime: {e}")
 
+    def check_captive_portal(self):
+        """Check if we're behind a captive portal"""
+        try:
+            # Bypass proxy to avoid loop (we are the proxy)
+            proxy_handler = urllib.request.ProxyHandler({})
+            opener = urllib.request.build_opener(proxy_handler)
+            req = opener.open('http://captive.apple.com/hotspot-detect.html', timeout=5)
+            is_captive = b'Success' not in req.read()
+            if is_captive != self.captive_portal_mode:
+                self.captive_portal_mode = is_captive
+                logger.info("📶 Captive portal detected - allowing all traffic" if is_captive
+                           else "✅ Internet connected - resuming blocking")
+        except Exception:
+            if not self.captive_portal_mode:
+                self.captive_portal_mode = True
+                logger.info("📶 Network issue detected - allowing all traffic")
+
+    def record_connection_failure(self):
+        """Record a connection failure and check for captive portal"""
+        now = time.time()
+        # Any failure triggers a check, rate-limited to once per 10s
+        if now - self.last_captive_check > 10:
+            self.last_captive_check = now
+            self.check_captive_portal()
+
     def should_block_domain(self, hostname):
         """Check if domain should be blocked (with subdomain matching)"""
         if not hostname:
+            return False
+
+        # Allow all traffic in captive portal mode
+        if self.captive_portal_mode:
             return False
 
         # First check if domain is explicitly excluded (takes precedence)
@@ -172,6 +204,7 @@ class HTTPProxy:
                 server_socket.connect((hostname, port))
             except Exception as e:
                 logger.error(f"Failed to connect to {hostname}:{port}: {e}")
+                self.record_connection_failure()
 
                 if method == 'CONNECT':
                     response = b'HTTP/1.1 502 Bad Gateway\r\n\r\n'
@@ -276,6 +309,7 @@ class HTTPProxy:
         """Start the HTTP proxy server"""
         try:
             self.load_blocked_domains()
+            self.check_captive_portal()
 
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -286,11 +320,18 @@ class HTTPProxy:
             logger.info(f"🚀 HTTP proxy started on 127.0.0.1:{self.port}")
             logger.info(f"📋 Blocking {len(self.blocked_domains)} domains")
 
-            # Start background thread to check for file changes
+            # Start background thread to check for file changes and captive portal
             def reload_checker():
                 while self.running:
                     time.sleep(5)
                     self.check_and_reload()
+                    # Check captive portal: every 5s if in captive mode (to resume blocking fast)
+                    # Otherwise rely on connection failure detection, with 60s fallback
+                    now = time.time()
+                    interval = 5 if self.captive_portal_mode else 60
+                    if now - self.last_captive_check >= interval:
+                        self.check_captive_portal()
+                        self.last_captive_check = now
 
             checker_thread = threading.Thread(target=reload_checker, daemon=True)
             checker_thread.start()
