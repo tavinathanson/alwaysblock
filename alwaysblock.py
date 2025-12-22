@@ -630,13 +630,23 @@ class AlwaysBlock:
             print(f"✅ Created 1 session")
 
     def pause(self):
-        """Manually pause blocking (fallback if auto-detection doesn't work)"""
-        domains_data = {'domains': [], 'excluded': [], 'paused': True}
+        """Manually pause blocking for 2 minutes (fallback if auto-detection doesn't work)"""
+        pause_until = time.time() + 120  # 2 minutes from now
+
+        # Get current domains so they're ready when pause expires
+        all_domains = self.config_manager.get_all_configured_domains()
+        excluded_domains = self.config_manager.get_excluded_domains()
+
+        domains_data = {
+            'domains': sorted(list(all_domains)),
+            'excluded': sorted(list(excluded_domains)),
+            'pause_until': pause_until
+        }
         try:
             with open(self.json_path, 'w') as f:
-                json.dump(domains_data, f)
-            print("✅ Blocking paused")
-            print("   Run 'alwaysblock resume' to restore blocking")
+                json.dump(domains_data, f, indent=2)
+            print("✅ Blocking paused for 2 minutes")
+            print("   Run 'alwaysblock resume' to restore blocking immediately")
         except Exception as e:
             print(f"Error: Could not write to {self.json_path}: {e}")
             sys.exit(1)

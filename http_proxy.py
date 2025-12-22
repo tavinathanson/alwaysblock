@@ -27,7 +27,9 @@ class HTTPProxy:
         self.running = False
         self.last_mtime = 0
         self.captive_portal_mode = False
+        self.captive_portal_entered_at = 0
         self.last_captive_check = 0
+        self.pause_until = 0  # Manual pause expiry timestamp
 
     def load_blocked_domains(self):
         """Load blocked domains from JSON file"""
@@ -37,6 +39,7 @@ class HTTPProxy:
                     data = json.load(f)
                     self.blocked_domains = set(data.get('domains', []))
                     self.excluded_domains = set(data.get('excluded', []))
+                    self.pause_until = data.get('pause_until', 0)
                     self.last_mtime = self.blocked_domains_file.stat().st_mtime
                     logger.info(f"Loaded {len(self.blocked_domains)} blocked domains, {len(self.excluded_domains)} excluded")
             else:
@@ -68,12 +71,17 @@ class HTTPProxy:
             is_captive = b'Success' not in req.read()
             if is_captive != self.captive_portal_mode:
                 self.captive_portal_mode = is_captive
-                logger.info("📶 Captive portal detected - allowing all traffic" if is_captive
-                           else "✅ Internet connected - resuming blocking")
+                if is_captive:
+                    self.captive_portal_entered_at = time.time()
+                    logger.info("📶 Captive portal detected - allowing all traffic for 2 min")
+                else:
+                    self.captive_portal_entered_at = 0
+                    logger.info("✅ Internet connected - resuming blocking")
         except Exception:
             if not self.captive_portal_mode:
                 self.captive_portal_mode = True
-                logger.info("📶 Network issue detected - allowing all traffic")
+                self.captive_portal_entered_at = time.time()
+                logger.info("📶 Network issue detected - allowing all traffic for 2 min")
 
     def record_connection_failure(self):
         """Record a connection failure and check for captive portal"""
@@ -88,9 +96,21 @@ class HTTPProxy:
         if not hostname:
             return False
 
-        # Allow all traffic in captive portal mode
-        if self.captive_portal_mode:
+        now = time.time()
+
+        # Check manual pause (from pause command)
+        if self.pause_until > now:
             return False
+
+        # Check captive portal mode with 2-minute auto-expire
+        if self.captive_portal_mode:
+            if self.captive_portal_entered_at > 0 and (now - self.captive_portal_entered_at) > 120:
+                # Auto-expire after 2 minutes
+                self.captive_portal_mode = False
+                self.captive_portal_entered_at = 0
+                logger.info("✅ Captive portal mode expired - resuming blocking")
+            else:
+                return False
 
         # First check if domain is explicitly excluded (takes precedence)
         if hostname in self.excluded_domains:
