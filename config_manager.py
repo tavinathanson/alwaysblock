@@ -237,3 +237,21 @@ class ConfigManager:
     def get_default_profile(self) -> Optional[str]:
         """Get the default profile name if specified"""
         return self._config_data.get('default_profile', 'unblock')
+
+    def get_profile_target_type(self, profile_name: str) -> Optional[str]:
+        """Get target_type for a profile: 'all', 'single', or None (legacy behavior)"""
+        profile = self.profiles.get(profile_name, {})
+        return profile.get('target_type')
+
+    def is_profile_independent(self, profile_name: str) -> bool:
+        """Check if profile runs independently (doesn't conflict with other sessions)
+
+        Default: True if target_type is 'all', False otherwise.
+        Can be explicitly overridden with 'independent: true/false' in config.
+        """
+        profile = self.profiles.get(profile_name, {})
+        # Explicit setting takes precedence
+        if 'independent' in profile:
+            return profile['independent']
+        # Default: 'all' profiles are independent
+        return profile.get('target_type') == 'all'

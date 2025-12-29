@@ -240,3 +240,185 @@ def test_same_domain_queues_when_active(db):
     assert slack_2['id'] == slack_session_2, "Waiting session should be slack 2"
     assert slack_2['start_at'] is None, "Waiting session should not have start_at yet"
     assert slack_2['end_at'] is None, "Waiting session should not have end_at yet"
+
+
+def test_independent_session_never_queues(db):
+    """Test that sessions marked as independent never queue behind other sessions"""
+    # Create an "all domains" session
+    all_domains = ['youtube.com', 'reddit.com', 'instagram.com']
+    session1 = db.create_session(
+        profile='unblock',
+        domains=all_domains,
+        wait_minutes=1,
+        duration_minutes=30
+    )
+
+    # First session should be pending
+    pending = db.get_pending_sessions()
+    assert len(pending) == 1, "First session should be pending"
+
+    # Create an independent session with same domains (e.g., bypass)
+    # This should NOT queue, even though domains match exactly
+    session2 = db.create_session(
+        profile='bypass',
+        domains=all_domains,
+        wait_minutes=0,
+        duration_minutes=5,
+        independent=True  # This is the key flag
+    )
+
+    # Independent session should be active immediately (wait=0), not waiting
+    active = db.get_active_sessions()
+    waiting = db.get_waiting_sessions()
+    pending = db.get_pending_sessions()
+
+    assert len(active) == 1, "Independent session should be active"
+    assert active[0]['id'] == session2, "Active session should be the independent one"
+    assert len(waiting) == 0, "No sessions should be waiting"
+    assert len(pending) == 1, "Original session should still be pending"
+
+
+def test_independent_session_runs_concurrently(db):
+    """Test that independent sessions run concurrently with regular sessions"""
+    # Create an active session for instagram
+    instagram_session = db.create_session(
+        profile='unblock',
+        domains=['instagram.com'],
+        wait_minutes=0,  # Active immediately
+        duration_minutes=30
+    )
+
+    # Instagram should be active
+    active = db.get_active_sessions()
+    assert len(active) == 1, "Instagram should be active"
+
+    # Create an independent "bypass" session for all domains (including instagram)
+    all_domains = ['youtube.com', 'instagram.com', 'reddit.com']
+    bypass_session = db.create_session(
+        profile='bypass',
+        domains=all_domains,
+        wait_minutes=0,
+        duration_minutes=5,
+        independent=True
+    )
+
+    # Both sessions should be active
+    active = db.get_active_sessions()
+    assert len(active) == 2, "Both sessions should be active concurrently"
+
+    # All domains from both sessions should be in the unblocked list
+    all_unblocked = set(db.get_all_domains_from_sessions())
+    expected = {'youtube.com', 'instagram.com', 'reddit.com'}
+    assert all_unblocked == expected, "Union of all active sessions' domains should be unblocked"
+
+    # Expire the bypass session (simulate time passing)
+    db.cancel_session(bypass_session)
+
+    # Instagram session should still be active
+    active = db.get_active_sessions()
+    assert len(active) == 1, "Instagram should still be active after bypass ends"
+    assert active[0]['id'] == instagram_session, "Remaining active should be instagram"
+
+    # Only instagram's domains should remain unblocked
+    remaining_unblocked = db.get_all_domains_from_sessions()
+    assert remaining_unblocked == ['instagram.com'], "Only instagram should remain unblocked"
+
+
+def test_independent_with_wait_time(db):
+    """Test that independent sessions with wait>0 become pending but don't queue"""
+    # Create a pending session for all domains
+    all_domains = ['youtube.com', 'reddit.com']
+    session1 = db.create_session(
+        profile='unblock',
+        domains=all_domains,
+        wait_minutes=5,
+        duration_minutes=30
+    )
+
+    # First session should be pending
+    pending = db.get_pending_sessions()
+    assert len(pending) == 1, "First session should be pending"
+
+    # Create an independent session with wait time (like quick with 0.5 min)
+    # Even with same domains, it should be pending (not waiting)
+    session2 = db.create_session(
+        profile='quick',
+        domains=all_domains,
+        wait_minutes=1,
+        duration_minutes=1,
+        independent=True
+    )
+
+    # Both sessions should be pending (independent doesn't queue)
+    pending = db.get_pending_sessions()
+    waiting = db.get_waiting_sessions()
+
+    assert len(pending) == 2, "Both sessions should be pending"
+    assert len(waiting) == 0, "No sessions should be waiting"
+
+
+def test_two_independent_sessions_same_domains(db):
+    """Test that two independent sessions with same domains both run (no queueing)"""
+    all_domains = ['youtube.com', 'reddit.com']
+
+    # Create first independent session
+    session1 = db.create_session(
+        profile='bypass',
+        domains=all_domains,
+        wait_minutes=0,
+        duration_minutes=5,
+        independent=True
+    )
+
+    # Create second independent session with same domains
+    session2 = db.create_session(
+        profile='bypass',
+        domains=all_domains,
+        wait_minutes=0,
+        duration_minutes=5,
+        independent=True
+    )
+
+    # Both should be active (independent sessions don't queue against each other)
+    active = db.get_active_sessions()
+    waiting = db.get_waiting_sessions()
+
+    assert len(active) == 2, "Both independent sessions should be active"
+    assert len(waiting) == 0, "No sessions should be waiting"
+
+
+def test_non_independent_wait_zero_still_would_cancel(db):
+    """Test that non-independent sessions with wait=0 would still queue (cancellation is in CLI layer)
+
+    Note: The actual cancellation logic is in alwaysblock.py, not db.py.
+    This test verifies that non-independent sessions still queue at the DB level.
+    The CLI decides whether to cancel based on the profile's independent flag.
+    """
+    all_domains = ['youtube.com', 'reddit.com']
+
+    # Create first session (active)
+    session1 = db.create_session(
+        profile='unblock',
+        domains=all_domains,
+        wait_minutes=0,
+        duration_minutes=30,
+        independent=False
+    )
+
+    # Create second non-independent session with same domains
+    # At DB level, it should queue (CLI would cancel the first one instead)
+    session2 = db.create_session(
+        profile='unblock',
+        domains=all_domains,
+        wait_minutes=0,
+        duration_minutes=30,
+        independent=False
+    )
+
+    # First should be active, second should be waiting (exact same domains)
+    active = db.get_active_sessions()
+    waiting = db.get_waiting_sessions()
+
+    assert len(active) == 1, "First session should be active"
+    assert len(waiting) == 1, "Second non-independent session should queue"
+    assert waiting[0]['id'] == session2, "Session 2 should be waiting"

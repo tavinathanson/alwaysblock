@@ -183,18 +183,27 @@ profiles:
       - tags: [ultra_distracting]
         wait_override: 30  # 30 min wait for Netflix
 
-  # Quick access
+  # Quick access (all domains)
   quick:
     description: "Quick 1-minute check"
     wait: 0.5
     duration: 1
+    target_type: all       # No targets; runs independently by default
 
-  # Emergency bypass
+  # Emergency bypass (all domains)
   bypass:
     description: "Emergency 5-minute unblock (once per hour)"
     wait: 0
     duration: 5
     cooldown: 60
+    target_type: all       # No targets; runs independently by default
+
+  # Peek at a single site
+  peek:
+    description: "Quick peek at one site"
+    wait: 0
+    duration: 1
+    target_type: single    # Exactly one target required
 ```
 
 ---
@@ -273,6 +282,11 @@ Profiles define unblocking behavior:
 - **duration**: How long to stay unblocked (minutes)
 - **cooldown**: Minimum time between uses (minutes)
 - **tag_rules**: Override wait times for specific tags
+- **target_type**: Controls which targets the profile accepts:
+  - `all`: Must be called without targets (applies to all domains). Runs independently by default.
+  - `single`: Must be called with exactly one target
+  - Omitted: Legacy behavior (can be either)
+- **independent**: Override the default independent behavior. Profiles with `target_type: all` default to `true`; others default to `false`.
 
 Example:
 
@@ -284,6 +298,19 @@ work:
   tag_rules:
     - tags: [work, productivity]
       wait_override: 0
+
+# Bypass runs independently (default for target_type: all)
+bypass:
+  wait: 0
+  duration: 5
+  cooldown: 60
+  target_type: all      # No targets; runs independently by default
+
+# Peek at a single site
+peek:
+  wait: 0
+  duration: 1
+  target_type: single   # Exactly one target required
 ```
 
 ### Tag System
@@ -340,6 +367,28 @@ alwaysblock unblock reddit  # Status: waiting_for_domain
 
 # After first session expires, second session automatically becomes active
 ```
+
+### Independent Sessions
+
+Some profiles (like `bypass` and `quick`) are marked as `independent: true`. These sessions:
+
+- **Never queue**: They start immediately regardless of other active sessions
+- **Don't cancel others**: Existing sessions continue running
+- **Run concurrently**: When an independent session ends, other sessions remain active
+
+Example:
+
+```bash
+# Start a session for instagram
+alwaysblock unblock instagram  # Active for 30 minutes
+
+# Start bypass (independent) - doesn't affect instagram session
+alwaysblock bypass             # All domains unblocked for 5 minutes
+
+# When bypass ends, instagram is still unblocked (its session continues)
+```
+
+This is useful for temporary "everything unblocked" scenarios that shouldn't disrupt existing sessions.
 
 ---
 

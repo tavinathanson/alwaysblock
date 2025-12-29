@@ -105,7 +105,7 @@ class Database:
     
     def create_session(self, profile: str, domains: List[str],
                       wait_minutes: int, duration_minutes: int, has_override: bool = False,
-                      target_name: str = None) -> int:
+                      target_name: str = None, independent: bool = False) -> int:
         """Create a new session
 
         If any of the domains are already in an active or pending session, this new session
@@ -120,11 +120,13 @@ class Database:
             duration_minutes: Minutes the session lasts
             has_override: True if this session has a tag-based wait override applied
             target_name: Original target name(s) requested (e.g., 'slack', 'gmail', or 'all')
+            independent: If True, skip queueing check (runs concurrently with other sessions)
         """
         now = datetime.now()
 
+        # Independent sessions never queue - they run concurrently with other sessions
         # Check if any of these domains are already in active/pending/waiting sessions
-        domain_in_use = self._check_domain_in_use(domains)
+        domain_in_use = False if independent else self._check_domain_in_use(domains)
 
         if domain_in_use:
             # Domain is currently in use - mark as waiting, don't set start/end times yet

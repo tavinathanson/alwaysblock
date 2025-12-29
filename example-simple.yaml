@@ -22,13 +22,21 @@ profiles:
     wait: 5
     duration: 30
 
-  # Quick check: 30 sec wait, 1 min access
+  # Quick check: 30 sec wait, 1 min access, all domains
   quick:
     wait: 0.5
     duration: 1
+    target_type: all    # No targets; runs independently by default
 
   # Emergency bypass: instant, 5 min access, 1 hour cooldown
   bypass:
     wait: 0
     duration: 5
     cooldown: 60
+    target_type: all    # No targets; runs independently by default
+
+  # Peek at a single site: instant, 1 min access
+  peek:
+    wait: 0
+    duration: 1
+    target_type: single # Must be called with exactly one target

@@ -518,6 +518,19 @@ class AlwaysBlock:
             print(f"Error: Invalid profile '{profile_name}'")
             sys.exit(1)
 
+        # Validate target_type constraint
+        target_type = self.config_manager.get_profile_target_type(profile_name)
+        if target_type == 'all' and targets:
+            print(f"Error: Profile '{profile_name}' applies to all domains and doesn't accept targets")
+            sys.exit(1)
+        if target_type == 'single':
+            if not targets:
+                print(f"Error: Profile '{profile_name}' requires exactly one target")
+                sys.exit(1)
+            if len(targets) > 1:
+                print(f"Error: Profile '{profile_name}' only accepts a single target, got {len(targets)}")
+                sys.exit(1)
+
         # If no targets specified, use all configured domains
         if not targets:
             all_domains = self.config_manager.get_all_configured_domains()
@@ -572,9 +585,10 @@ class AlwaysBlock:
             # Calculate timing for this specific target
             timing = self.config_manager.calculate_timing(profile_name, [target])
 
-            # For immediate access profiles (wait=0), cancel any overlapping existing sessions
-            # This allows bypass to work immediately even if domains are already in use
-            if timing['wait'] == 0:
+            # For non-independent immediate access profiles (wait=0), cancel overlapping sessions
+            # Independent profiles (like bypass/quick) run concurrently without affecting others
+            is_independent = self.config_manager.is_profile_independent(profile_name)
+            if timing['wait'] == 0 and not is_independent:
                 all_sessions = (self.db.get_active_sessions() +
                                self.db.get_pending_sessions() +
                                self.db.get_waiting_sessions())
@@ -588,13 +602,15 @@ class AlwaysBlock:
                         print(f"Cancelled overlapping session #{session['id']}: {display_name}")
 
             # Create session - it will automatically queue if these domains are already active/pending
+            # Independent sessions never queue and run concurrently with other sessions
             session_id = self.db.create_session(
                 profile=profile_name,
                 domains=domains,
                 wait_minutes=timing['wait'],
                 duration_minutes=timing['duration'],
                 has_override=timing['has_override'],
-                target_name=target
+                target_name=target,
+                independent=is_independent
             )
 
             session_ids.append(session_id)

@@ -146,18 +146,27 @@ profiles:
       - tags: [work, communication]
         wait_override: 1   # 1 min wait for Slack
 
-  # Quick check
+  # Quick check - all domains
   quick:
     description: "Quick 1-minute check"
     wait: 0.5              # 30 seconds
     duration: 1
+    target_type: all       # No targets; runs independently by default
 
-  # Emergency bypass
+  # Emergency bypass - all domains
   bypass:
     description: "Emergency 5-minute unblock (once per hour)"
     wait: 0
     duration: 5
     cooldown: 60
+    target_type: all       # No targets; runs independently by default
+
+  # Peek at a single site
+  peek:
+    description: "Quick peek at one site"
+    wait: 0
+    duration: 1
+    target_type: single    # Must be called with exactly one target
 
   # Work mode
   work:

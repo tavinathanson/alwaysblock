@@ -116,3 +116,109 @@ def test_empty_input(config_manager):
 
     assert len(resolved) == 0, "Should return no resolved domains"
     assert len(invalid) == 0, "Should return no invalid domains"
+
+
+@pytest.fixture
+def config_with_target_types():
+    """Create a config manager with profiles that have target_type and independent settings"""
+    test_config = {
+        'domains': {
+            'youtube.com': {},
+            'reddit.com': {},
+            'instagram.com': {},
+        },
+        'profiles': {
+            'unblock': {
+                'wait': 1,
+                'duration': 30,
+            },
+            'bypass': {
+                'wait': 0,
+                'duration': 5,
+                'target_type': 'all',
+                # independent defaults to True for target_type: all
+            },
+            'quick': {
+                'wait': 0.5,
+                'duration': 1,
+                'target_type': 'all',
+                # independent defaults to True for target_type: all
+            },
+            'peek': {
+                'wait': 0,
+                'duration': 1,
+                'target_type': 'single',
+            },
+            'legacy': {
+                'wait': 1,
+                'duration': 10,
+                # No target_type - legacy behavior
+            },
+            'all_but_not_independent': {
+                'wait': 0,
+                'duration': 5,
+                'target_type': 'all',
+                'independent': False,  # Explicitly override the default
+            }
+        }
+    }
+
+    temp_config = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
+    yaml.dump(test_config, temp_config)
+    temp_config.close()
+    config_path = Path(temp_config.name)
+
+    cm = ConfigManager(str(config_path))
+    cm.load()
+
+    yield cm
+
+    config_path.unlink(missing_ok=True)
+
+
+def test_target_type_all(config_with_target_types):
+    """Test that profile with target_type 'all' returns correct value"""
+    cm = config_with_target_types
+
+    assert cm.get_profile_target_type('bypass') == 'all'
+    assert cm.get_profile_target_type('quick') == 'all'
+
+
+def test_target_type_single(config_with_target_types):
+    """Test that profile with target_type 'single' returns correct value"""
+    cm = config_with_target_types
+
+    assert cm.get_profile_target_type('peek') == 'single'
+
+
+def test_target_type_legacy(config_with_target_types):
+    """Test that profile without target_type returns None (legacy behavior)"""
+    cm = config_with_target_types
+
+    assert cm.get_profile_target_type('legacy') is None
+    assert cm.get_profile_target_type('unblock') is None
+
+
+def test_independent_defaults_true_for_target_type_all(config_with_target_types):
+    """Test that profiles with target_type='all' default to independent=True"""
+    cm = config_with_target_types
+
+    assert cm.is_profile_independent('bypass') is True
+    assert cm.is_profile_independent('quick') is True
+
+
+def test_independent_false_by_default_for_others(config_with_target_types):
+    """Test that profiles without target_type='all' default to independent=False"""
+    cm = config_with_target_types
+
+    assert cm.is_profile_independent('unblock') is False
+    assert cm.is_profile_independent('peek') is False
+    assert cm.is_profile_independent('legacy') is False
+
+
+def test_independent_explicit_override(config_with_target_types):
+    """Test that explicit independent=False overrides the target_type='all' default"""
+    cm = config_with_target_types
+
+    # This profile has target_type='all' but explicitly sets independent=False
+    assert cm.is_profile_independent('all_but_not_independent') is False
