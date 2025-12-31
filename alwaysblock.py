@@ -20,6 +20,14 @@ from db import Database
 from system_proxy import SystemProxy
 
 
+def format_time_remaining(seconds):
+    """Format time remaining, showing seconds when < 3 minutes"""
+    if seconds < 180:  # Less than 3 minutes
+        return f"{int(seconds)} seconds"
+    else:
+        return f"{int(seconds / 60)} minutes"
+
+
 class AlwaysBlock:
     """AlwaysBlock CLI with transparent proxy management"""
 
@@ -191,8 +199,8 @@ class AlwaysBlock:
                 display_name = session.get('target_name') or ', '.join(session['domains'])
                 end_at = session['end_at']
                 remaining = (end_at - datetime.now()).total_seconds()
-                minutes = int(remaining / 60)
-                print(f"  #{session['id']}: {display_name} - {minutes} minutes remaining")
+                time_str = format_time_remaining(remaining)
+                print(f"  #{session['id']}: {display_name} - {time_str} remaining")
             print(f"")
 
         if pending_sessions:
@@ -202,8 +210,8 @@ class AlwaysBlock:
                 display_name = session.get('target_name') or ', '.join(session['domains'])
                 start_at = session['start_at']
                 wait_time = (start_at - datetime.now()).total_seconds()
-                minutes = int(wait_time / 60)
-                print(f"  #{session['id']}: {display_name} - {minutes} minutes until accessible")
+                time_str = format_time_remaining(wait_time)
+                print(f"  #{session['id']}: {display_name} - {time_str} until accessible")
             print(f"")
 
         if waiting_sessions:
@@ -629,9 +637,9 @@ class AlwaysBlock:
             else:
                 # Pending/active sessions have calculated times
                 now = datetime.now()
-                wait_time = (session['start_at'] - now).total_seconds() / 60
+                wait_time = (session['start_at'] - now).total_seconds()
 
-                print(f"  Wait: {int(wait_time)} minutes ({timing['explanation']})")
+                print(f"  Wait: {format_time_remaining(wait_time)} ({timing['explanation']})")
                 print(f"  Duration: {timing['duration']} minutes")
                 print(f"  Start at: {session['start_at'].strftime('%-I:%M:%S %p')}")
                 print(f"  End at: {session['end_at'].strftime('%-I:%M:%S %p')}")
