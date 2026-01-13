@@ -1132,6 +1132,7 @@ def main():
 
     # Block all command
     subparsers.add_parser('block-all', help='Block all domains immediately')
+    subparsers.add_parser('reset', help='Cancel all unblocks (alias for block-all)')
 
     # Pause/resume (manual fallback for captive portal)
     subparsers.add_parser('pause', help='Manually pause blocking (for captive portal issues)')
@@ -1182,7 +1183,7 @@ def main():
         ab.stop()
     elif args.command == 'restart':
         ab.restart()
-    elif args.command == 'block-all':
+    elif args.command == 'block-all' or args.command == 'reset':
         ab.block_all()
     elif args.command == 'pause':
         ab.pause()
