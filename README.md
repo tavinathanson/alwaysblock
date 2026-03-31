@@ -560,6 +560,26 @@ Should show your username instead of `USERNAME`.
 alwaysblock start  # Should not prompt for password
 ```
 
+### Using a VPN or proxy extension (e.g., Tailscale + Zero Omega)
+
+Chrome proxy extensions like Zero Omega (SwitchyOmega) override the macOS system proxy, which means AlwaysBlock's blocking won't apply to Chrome traffic routed through the extension.
+
+**Fix:** Configure your proxy extension to route traffic through AlwaysBlock's proxy instead of going direct.
+
+For **Zero Omega** (or SwitchyOmega):
+
+1. Create a new proxy profile (e.g., "AlwaysBlock"):
+   - **Scheme: HTTP** (not HTTPS — AlwaysBlock's proxy speaks plain HTTP and handles HTTPS via CONNECT)
+   - **Server:** `127.0.0.1`
+   - **Port:** `8905`
+   - No bypass list needed (AlwaysBlock handles its own bypass rules internally)
+
+2. In your **auto switch** profile, change the **Default** from `[Direct]` to your new `AlwaysBlock` profile.
+
+Now your VPN/proxy rules still work for matched conditions (e.g., routing `simba` traffic through a Tailscale proxy), while everything else goes through AlwaysBlock for blocking.
+
+**Common mistake:** Setting the proxy scheme to HTTPS instead of HTTP. AlwaysBlock's proxy doesn't speak TLS — Chrome will fail to connect if you set HTTPS as the scheme. Use **HTTP** even though it handles HTTPS traffic (via the standard CONNECT method).
+
 ### Internet broken after disabling
 
 ```bash
