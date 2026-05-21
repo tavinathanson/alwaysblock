@@ -527,6 +527,10 @@ lsof -i :8905
 alwaysblock start
 ```
 
+### Sites intermittently fail to load (DNS)
+
+If pages intermittently fail to load (especially ad/analytics/CDN domains), the cause is usually a flaky DNS resolver rather than AlwaysBlock's blocking. See [docs/dns-troubleshooting.md](docs/dns-troubleshooting.md).
+
 ### Auto-start not working after reboot
 
 **Check LaunchDaemon:**

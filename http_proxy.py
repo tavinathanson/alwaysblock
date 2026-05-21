@@ -30,6 +30,8 @@ class HTTPProxy:
         self.captive_portal_entered_at = 0
         self.last_captive_check = 0
         self.pause_until = 0  # Manual pause expiry timestamp
+        self.recent_failures = 0  # Consecutive upstream failures (reset on success)
+        self.first_recent_failure_at = 0
 
     def load_blocked_domains(self):
         """Load blocked domains from JSON file"""
@@ -84,12 +86,31 @@ class HTTPProxy:
                 logger.info("📶 Network issue detected - allowing all traffic for 2 min")
 
     def record_connection_failure(self):
-        """Record a connection failure and check for captive portal"""
+        """Record a connection failure and check for captive portal.
+
+        A single transient DNS/connect blip should NOT disable blocking. We only
+        run the captive-portal check after several failures cluster together
+        (a real network outage), so one bad lookup can't turn off blocking for 2 min.
+        """
         now = time.time()
-        # Any failure triggers a check, rate-limited to once per 10s
+        # Reset the cluster if the last failure was a while ago
+        if now - self.first_recent_failure_at > 15:
+            self.recent_failures = 0
+            self.first_recent_failure_at = now
+        self.recent_failures += 1
+
+        # Require a cluster of failures before suspecting a real network problem
+        if self.recent_failures < 3:
+            return
+
+        # Rate-limited to once per 10s
         if now - self.last_captive_check > 10:
             self.last_captive_check = now
             self.check_captive_portal()
+
+    def record_connection_success(self):
+        """Clear the failure cluster after a successful upstream connection."""
+        self.recent_failures = 0
 
     def should_block_domain(self, hostname):
         """Check if domain should be blocked (with subdomain matching)"""
@@ -145,6 +166,44 @@ class HTTPProxy:
                 return True
 
         return False
+
+    def connect_upstream(self, hostname, port):
+        """Resolve and connect to the upstream server.
+
+        Resilient to transient DNS blips: getaddrinfo is retried a couple of
+        times, and every resolved address is tried (not just the first), so a
+        flaky resolver or one dead IP doesn't turn into an instant 502.
+        Returns a connected socket, or None on failure.
+        """
+        addrinfo = None
+        last_err = None
+        for attempt in range(3):
+            try:
+                addrinfo = socket.getaddrinfo(hostname, port, socket.AF_INET, socket.SOCK_STREAM)
+                break
+            except socket.gaierror as e:
+                last_err = e
+                # Transient resolver failure (EAI_NONAME/EAI_AGAIN etc.). Brief backoff, then retry.
+                time.sleep(0.15 * (attempt + 1))
+        if not addrinfo:
+            logger.error(f"DNS resolution failed for {hostname}:{port}: {last_err}")
+            return None
+
+        for family, socktype, proto, _canon, sockaddr in addrinfo:
+            server_socket = socket.socket(family, socktype, proto)
+            server_socket.settimeout(5.0)
+            try:
+                server_socket.connect(sockaddr)
+                self.record_connection_success()
+                return server_socket
+            except Exception as e:
+                last_err = e
+                try:
+                    server_socket.close()
+                except Exception:
+                    pass
+        logger.error(f"Failed to connect to {hostname}:{port}: {last_err}")
+        return None
 
     def handle_connection(self, client_socket, client_address):
         """Handle a single client connection"""
@@ -216,28 +275,18 @@ class HTTPProxy:
             # Allow the connection
             logger.debug(f"✅ Allowing {method} to: {hostname}:{port}")
 
-            # Connect to the real server
-            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server_socket.settimeout(5.0)
-
-            try:
-                server_socket.connect((hostname, port))
-            except Exception as e:
-                logger.error(f"Failed to connect to {hostname}:{port}: {e}")
+            # Connect to the real server (with DNS retry + multi-IP fallback)
+            server_socket = self.connect_upstream(hostname, port)
+            if server_socket is None:
                 self.record_connection_failure()
 
-                if method == 'CONNECT':
-                    response = b'HTTP/1.1 502 Bad Gateway\r\n\r\n'
-                else:
-                    response = b'HTTP/1.1 502 Bad Gateway\r\n\r\n'
-
+                response = b'HTTP/1.1 502 Bad Gateway\r\n\r\n'
                 try:
                     client_socket.sendall(response)
                 except:
                     pass
 
                 client_socket.close()
-                server_socket.close()
                 return
 
             if method == 'CONNECT':
