@@ -22,6 +22,20 @@ Check which resolver is in use:
 scutil --dns | grep nameserver
 ```
 
+### Important: rule out file descriptor exhaustion first
+
+DNS failures and "Too many open files" failures often appear together at the same timestamps, because once the proxy runs out of file descriptors, `getaddrinfo` can no longer allocate a query socket and surfaces as the same `EAI_NONAME` error. Check for both:
+
+```bash
+grep -iE "error|fail|too many" /tmp/proxy.log | tail -40
+```
+
+If you see `[Errno 24] Too many open files` interleaved with the DNS errors, the underlying problem is FD exhaustion, not DNS. macOS launchd starts daemons with a soft `RLIMIT_NOFILE` of 256, which a busy page (many subdomains opening parallel connections) can blow past. The proxy now raises its own soft limit to 65536 at startup, so this should not recur after restart. To verify the live limit:
+
+```bash
+grep RLIMIT_NOFILE /tmp/proxy.log | tail -1
+```
+
 ## Fix
 
 Point your Mac at a reliable public resolver (1.1.1.1 is Cloudflare, 8.8.8.8 is Google):

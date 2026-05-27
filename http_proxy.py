@@ -8,11 +8,31 @@ import select
 import threading
 import logging
 import json
+import resource
 import time
 import urllib.request
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def raise_fd_limit(target=65536):
+    """Raise the soft RLIMIT_NOFILE so bursts of concurrent connections don't
+    exhaust file descriptors. macOS launchd starts daemons with a soft limit
+    of 256; each proxied connection uses two sockets, so a single busy page
+    can blow past that and cause both EMFILE on accept() and EAI_NONAME on
+    getaddrinfo() (since the resolver can't allocate a query socket either).
+    """
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        new_soft = min(target, hard) if hard != resource.RLIM_INFINITY else target
+        if new_soft > soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+            logger.info(f"Raised RLIMIT_NOFILE soft limit: {soft} -> {new_soft} (hard={hard})")
+        else:
+            logger.info(f"RLIMIT_NOFILE already adequate: soft={soft}, hard={hard}")
+    except (ValueError, OSError) as e:
+        logger.warning(f"Could not raise RLIMIT_NOFILE: {e}")
 
 
 class HTTPProxy:
@@ -447,6 +467,8 @@ if __name__ == '__main__':
         level=logging.INFO,
         format='%(asctime)s [%(levelname)s] %(message)s'
     )
+
+    raise_fd_limit()
 
     proxy = HTTPProxy()
     proxy.start()

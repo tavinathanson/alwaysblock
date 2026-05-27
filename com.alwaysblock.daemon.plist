@@ -30,5 +30,19 @@
 
     <key>ThrottleInterval</key>
     <integer>10</integer>
+
+    <!-- Bump file descriptor limit. macOS launchd defaults to 256, which a
+         busy page can exhaust (each proxied connection uses two sockets, and
+         FD exhaustion also breaks DNS via getaddrinfo). -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
 </dict>
 </plist>
