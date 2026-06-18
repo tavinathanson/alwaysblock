@@ -49,6 +49,15 @@ class Database:
                     last_used TIMESTAMP NOT NULL
                 )
             """)
+
+            # Durable key/value store for persistent state (e.g. pause_until).
+            # Lives in the db (not /tmp) so an all-day disable survives reboots.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
             
             # Indexes for common queries
             conn.execute("""
@@ -94,6 +103,30 @@ class Database:
             yield conn
         finally:
             conn.close()
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Store a durable key/value setting"""
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, str(value)),
+            )
+            conn.commit()
+
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Retrieve a durable key/value setting (returns default if unset)"""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+            return row['value'] if row else default
+
+    def delete_setting(self, key: str) -> None:
+        """Remove a durable key/value setting"""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+            conn.commit()
 
     def _datetime_to_str(self, dt: datetime) -> str:
         """Convert datetime to ISO format string for storage"""

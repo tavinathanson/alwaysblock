@@ -91,6 +91,17 @@ class AlwaysBlock:
             'expirations': {}  # Proxy doesn't use temporary blocks for now
         }
 
+        # Carry forward any durable pause (manual 2-min pause or all-day disable).
+        # pause_until lives in the db, so every rewrite of this file must re-apply
+        # it — otherwise a session expiry, daemon restart, or reboot would silently
+        # wipe an active disable and blocking would turn back on.
+        pause_until = self._get_pause_until()
+        if pause_until > time.time():
+            domains_data['pause_until'] = pause_until
+        elif pause_until:
+            # Expired: clear it so we don't keep checking a stale value.
+            self.db.delete_setting('pause_until')
+
         # Write to JSON file
         self.json_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -170,6 +181,14 @@ class AlwaysBlock:
         print(f"==================")
         print(f"Configured domains: {len(all_configured)}")
         print(f"Currently blocked: {blocked_count}")
+
+        # Surface an active pause/disable so it's obvious blocking is off.
+        pause_until = self._get_pause_until()
+        if pause_until > time.time():
+            until = datetime.fromtimestamp(pause_until)
+            remaining = format_time_remaining(pause_until - time.time())
+            print(f"⏸️  Blocking DISABLED until {until.strftime('%-I:%M %p')} ({remaining} left)")
+            print(f"   Re-enable now with: alwaysblock resume")
         print(f"")
 
         # Check proxy status
@@ -653,30 +672,49 @@ class AlwaysBlock:
         else:
             print(f"✅ Created 1 session")
 
+    def _get_pause_until(self):
+        """Return the durable pause-until timestamp (0.0 if unset/unparseable)"""
+        raw = self.db.get_setting('pause_until')
+        if not raw:
+            return 0.0
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _set_pause_until(self, pause_until):
+        """Persist the pause-until timestamp durably and push it to the proxy"""
+        self.db.set_setting('pause_until', repr(float(pause_until)))
+        # _write_domains_for_proxy reads pause_until back from the db and writes
+        # it into the proxy's JSON, so blocking turns off immediately.
+        self._write_domains_for_proxy()
+
     def pause(self):
         """Manually pause blocking for 2 minutes (fallback if auto-detection doesn't work)"""
-        pause_until = time.time() + 120  # 2 minutes from now
+        self._set_pause_until(time.time() + 120)  # 2 minutes from now
+        print("✅ Blocking paused for 2 minutes")
+        print("   Run 'alwaysblock resume' to restore blocking immediately")
 
-        # Get current domains so they're ready when pause expires
-        all_domains = self.config_manager.get_all_configured_domains()
-        excluded_domains = self.config_manager.get_excluded_domains()
+    def disable(self):
+        """Disable blocking for the rest of the day (until local midnight).
 
-        domains_data = {
-            'domains': sorted(list(all_domains)),
-            'excluded': sorted(list(excluded_domains)),
-            'pause_until': pause_until
-        }
-        try:
-            with open(self.json_path, 'w') as f:
-                json.dump(domains_data, f, indent=2)
-            print("✅ Blocking paused for 2 minutes")
-            print("   Run 'alwaysblock resume' to restore blocking immediately")
-        except Exception as e:
-            print(f"Error: Could not write to {self.json_path}: {e}")
-            sys.exit(1)
+        Intended for travel / hotspots where blocking gets in the way. Unlike the
+        2-minute pause, this is durable: it survives session expiry, daemon
+        restarts, and reboots, so blocking won't quietly turn back on before
+        midnight. Run 'alwaysblock resume' to re-enable early.
+        """
+        now = datetime.now()
+        midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        self._set_pause_until(midnight.timestamp())
+        print(f"✅ Blocking disabled until midnight ({midnight.strftime('%-I:%M %p')})")
+        print(f"   That's {format_time_remaining((midnight - now).total_seconds())} from now")
+        print("   Run 'alwaysblock resume' to re-enable blocking now")
 
     def resume(self):
-        """Resume blocking after manual pause"""
+        """Resume blocking after a manual pause or all-day disable"""
+        self.db.delete_setting('pause_until')
         self._write_domains_for_proxy()
         print("✅ Blocking resumed")
 
@@ -1135,8 +1173,9 @@ def main():
     subparsers.add_parser('reset', help='Cancel all unblocks (alias for block-all)')
 
     # Pause/resume (manual fallback for captive portal)
-    subparsers.add_parser('pause', help='Manually pause blocking (for captive portal issues)')
-    subparsers.add_parser('resume', help='Resume blocking after manual pause')
+    subparsers.add_parser('pause', help='Manually pause blocking for 2 min (for captive portal issues)')
+    subparsers.add_parser('disable', help='Disable blocking until midnight (for travel/hotspots; survives reboot)')
+    subparsers.add_parser('resume', help='Resume blocking after a pause or disable')
 
     # Cancel command
     cancel_parser = subparsers.add_parser('cancel', help='Cancel an unblock session')
@@ -1187,6 +1226,8 @@ def main():
         ab.block_all()
     elif args.command == 'pause':
         ab.pause()
+    elif args.command == 'disable':
+        ab.disable()
     elif args.command == 'resume':
         ab.resume()
     elif args.command == 'unblock':
