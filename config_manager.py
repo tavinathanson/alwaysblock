@@ -79,29 +79,6 @@ class ConfigManager:
             'extension': bool(backends.get('extension', False)),
         }
 
-    def get_profiles_summary(self) -> Dict[str, Any]:
-        """Compact, side-effect-free view of profiles for UI clients (the block
-        page's profile picker). Returns {name: {wait, duration, cooldown}}.
-
-        'wait' here is the profile's *base* wait in minutes; the real wait shown
-        to the user is computed server-side by calculate_timing() at unblock time
-        (it can add concurrent penalties and tag overrides). This is only enough
-        for the picker to show a rough "~N min" next to each profile name.
-        """
-        summary = {}
-        for name, profile in self.profiles.items():
-            if not isinstance(profile, dict):
-                profile = {}
-            wait = profile.get('wait', 5)
-            if isinstance(wait, dict):
-                wait = wait.get('base', 5)
-            summary[name] = {
-                'wait': wait,
-                'duration': profile.get('duration', 30),
-                'cooldown': profile.get('cooldown', 0),
-            }
-        return summary
-    
     def resolve_domains(self, targets: List[str]) -> tuple[List[str], List[str]]:
         """Resolve domain names/groups to actual domains
 

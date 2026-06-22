@@ -2,20 +2,22 @@
 """
 AlwaysBlock bridge — backend B's server side.
 
-A tiny loopback HTTP server that exposes the same brain the CLI uses to the
-Chrome extension. The extension is a dumb enforcer: it polls GET /state for the
-current blocklist and POSTs commands (unblock/disable/resume/block-all) back.
-ALL blocking logic — timing, queueing, cooldowns, the disable-until-midnight
-state — stays in the Python brain (alwaysblock.py). Nothing here re-implements
-it, which is what keeps the proxy and the extension perfectly consistent.
+A tiny, READ-ONLY loopback HTTP server that exposes the brain's current state to
+the Chrome extension:
+  * GET /state    — the blocklist + active/pending/queued sessions
+  * GET /resolve  — map a visited host to the CLI target that unblocks it
+
+The extension is a dumb enforcer/viewer: it reflects state and blocks. It never
+changes state — requesting access, disabling, etc. all happen through the
+`alwaysblock` CLI, which is the single control surface. ALL blocking logic —
+timing, queueing, cooldowns, the disable-until-midnight state — stays in the
+Python brain (alwaysblock.py); the bridge only reads it.
 
 Design notes:
-  * Binds to 127.0.0.1 only. It is reachable by any local process, not just the
-    extension. That's an accepted tradeoff: this tool is *soft* friction (you
-    can already defeat it by opening Safari or another browser), so a loopback
-    control port is not a meaningful new hole. If you ever want it to be a hard
-    lock, that comes from a managed-policy force-install + disabling Incognito,
-    not from locking down this port.
+  * Binds to 127.0.0.1 only, and is read-only, so a local process can learn the
+    blocklist but cannot use it to disable blocking. (This tool is soft friction
+    regardless — a hard lock comes from a managed-policy force-install, not this
+    port.)
   * Pure standard library — no extra pip dependencies beyond what the brain
     already needs (PyYAML).
   * Each request constructs a fresh AlwaysBlock, exactly like a CLI invocation:
@@ -57,43 +59,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
         # required, but permissive loopback CORS keeps curl/testing and
         # extension-page fetches frictionless.
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
         self.wfile.write(body)
 
-    def _read_json_body(self):
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        if not length:
-            return {}
-        try:
-            return json.loads(self.rfile.read(length).decode("utf-8")) or {}
-        except (ValueError, UnicodeDecodeError):
-            return {}
-
-    def _run_command(self, fn):
-        """Run a brain command that prints to stdout and may sys.exit() on a
-        validation error. Capture both so a bad request returns a clean JSON
-        error instead of killing the worker thread."""
-        import io
-        import contextlib
-        buf = io.StringIO()
-        ok = True
-        try:
-            with contextlib.redirect_stdout(buf):
-                fn()
-        except SystemExit:
-            # The brain calls sys.exit(1) for invalid profile/target etc.
-            ok = False
-        except Exception as e:  # noqa: BLE001 - surface any brain error to client
-            ok = False
-            buf.write(f"\nerror: {e}")
-        return ok, buf.getvalue().strip()
-
-    # --- routes ------------------------------------------------------------
-    def do_OPTIONS(self):
-        self._send(204, {})
-
+    # --- routes (read-only) ------------------------------------------------
     def do_GET(self):
         from urllib.parse import urlsplit, parse_qs
         parts = urlsplit(self.path)
@@ -124,40 +93,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
 
         self._send(404, {"error": "not found"})
-
-    def do_POST(self):
-        route = self.path.split("?", 1)[0]
-        body = self._read_json_body()
-        try:
-            brain = _new_brain()
-        except Exception as e:  # noqa: BLE001
-            return self._send(500, {"error": str(e)})
-
-        if route == "/unblock":
-            host = (body.get("domain") or "").strip()
-            profile = body.get("profile") or None
-            if not host:
-                return self._send(400, {"ok": False, "error": "missing 'domain'"})
-            # The extension sends the host the user navigated to; map it to the
-            # config target (domain or group) the brain knows how to unblock.
-            target = brain.config_manager.resolve_host_to_target(host) or host
-            ok, output = self._run_command(lambda: brain.unblock([target], profile))
-            return self._send(200 if ok else 400,
-                              {"ok": ok, "output": output, "target": target})
-
-        if route == "/disable":
-            ok, output = self._run_command(brain.disable)
-            return self._send(200, {"ok": ok, "output": output})
-
-        if route == "/resume":
-            ok, output = self._run_command(brain.resume)
-            return self._send(200, {"ok": ok, "output": output})
-
-        if route == "/block-all":
-            ok, output = self._run_command(brain.block_all)
-            return self._send(200, {"ok": ok, "output": output})
-
-        return self._send(404, {"error": "not found"})
 
 
 def serve(host="127.0.0.1", port=8906):

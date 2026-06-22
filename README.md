@@ -96,7 +96,7 @@ always has: **proxy on, extension off.**
 | Chrome Incognito | ✅ covered | ❌ off by default (see below) |
 | Chrome + a proxy extension (e.g. SwitchyOmega) routing around the system proxy | ❌ **bypassed** | ✅ covered |
 | Needs sudo / system changes | Yes (manages the macOS system proxy) | **No** (per-user LaunchAgent on `127.0.0.1:8906`) |
-| When a site is blocked, you see | A refused connection | A friendly block page with an "unblock" button + countdown |
+| When a site is blocked, you see | A refused connection | A block page showing the exact `alwaysblock unblock …` command + a live countdown, then auto-returns you when access opens |
 | Disable on a whim | System Settings → Network → Proxies | Toggle off in `chrome://extensions` |
 
 ### Why you might want both
@@ -114,8 +114,8 @@ The two backends cover each other's blind spots:
 
 Running **both** means: the extension catches the Chrome-with-proxy-extension
 case, and the proxy catches Safari, Incognito, native apps, and normal Chrome.
-Because both read the same brain, an `alwaysblock unblock reddit` (or the block
-page's button) takes effect everywhere consistently.
+Because both read the same brain, an `alwaysblock unblock reddit` takes effect
+everywhere consistently.
 
 > **Note on friction.** Neither backend is an unbreakable lock — this tool is
 > *soft* friction by design (you can always open another browser, toggle the
@@ -134,8 +134,13 @@ page's button) takes effect everywhere consistently.
 3. Load the extension in Chrome (once per Chrome profile you use):
    - Open `chrome://extensions`, enable **Developer mode**,
    - **Load unpacked** → select the `alwaysblock-chrome/` folder in this repo.
-4. If you use a proxy extension (e.g. SwitchyOmega), make sure it **bypasses
-   `127.0.0.1`/`localhost`** — otherwise the extension can't reach the bridge.
+   - Allow the extension's site access when asked. It needs broad host access
+     (`<all_urls>`) because it redirects *any* blocked site to its block page and
+     your blocklist is dynamic — it can't know the hosts in advance.
+4. If you also run a proxy extension that routes Chrome's traffic, make sure it
+   **bypasses `127.0.0.1`/`localhost`** so the extension can reach the bridge.
+   The extension blocks via `declarativeNetRequest` regardless of proxy routing,
+   so you don't need to route Chrome through AlwaysBlock to get blocking.
 
 Control the bridge by hand (it normally runs under the LaunchAgent):
 
@@ -145,10 +150,19 @@ alwaysblock bridge start    # start it in the background (no sudo)
 alwaysblock bridge stop
 ```
 
-The extension itself holds **no blocking logic**: it polls the bridge for the
-current blocklist and POSTs unblock/disable commands back to the brain. Timing,
-queueing, cooldowns, and the disable-until-midnight state all stay in the brain,
-so the two backends can never disagree.
+**How it's wired.** The extension holds **no blocking logic** and never changes
+state. It polls the bridge (read-only) for the current blocklist + session
+status and applies it via `declarativeNetRequest`. You manage everything from the
+`alwaysblock` CLI, exactly as with the proxy:
+
+- `alwaysblock unblock <site>` requests access — the block page shows the exact
+  command, then flips to a countdown and returns you to the site when it opens.
+- `alwaysblock disable` / `resume` / `block-all` also take effect in Chrome.
+
+The extension's toolbar popup is a read-only mirror of `alwaysblock status` (what
+is blocked, plus any active / pending / queued unblocks). Timing, queueing,
+cooldowns, and the disable state all live in the brain, so the backends can never
+disagree.
 
 ---
 

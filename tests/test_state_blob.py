@@ -36,7 +36,7 @@ def test_backends_extension_only():
     assert cm.get_backends() == {"proxy": False, "extension": True}
 
 
-# --- host -> target resolution (used by the bridge /unblock) --------------
+# --- host -> target resolution (used by the bridge /resolve) --------------
 @pytest.fixture
 def grouped_cm():
     return make_cm({
@@ -65,17 +65,6 @@ def test_resolve_group_member_returns_group_name(grouped_cm):
 
 def test_resolve_unconfigured_host_is_none(grouped_cm):
     assert grouped_cm.resolve_host_to_target("example.com") is None
-
-
-# --- profile summary (block-page picker) ----------------------------------
-def test_profiles_summary_shapes_base_wait():
-    cm = make_cm({"profiles": {
-        "unblock": {"wait": {"base": 5, "concurrent_penalty": 5}, "duration": 30},
-        "quick": {"wait": 0.5, "duration": 1, "cooldown": 2},
-    }})
-    summary = cm.get_profiles_summary()
-    assert summary["unblock"] == {"wait": 5, "duration": 30, "cooldown": 0}
-    assert summary["quick"] == {"wait": 0.5, "duration": 1, "cooldown": 2}
 
 
 # --- the enriched state blob (_write_state) -------------------------------
@@ -109,8 +98,6 @@ def brain(tmp_path, monkeypatch):
 def test_state_blob_basic_shape(brain):
     blob = brain._write_state()
     assert blob["schema_version"] == 2
-    assert blob["default_profile"] == "unblock"
-    assert "unblock" in blob["profiles"]
     assert blob["unblocked"] == {}
     assert blob["active_sessions"] == []
     assert blob["pending_sessions"] == []

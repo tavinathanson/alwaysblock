@@ -72,16 +72,16 @@ class AlwaysBlock:
         which one (or both) is running.
 
         State blob schema (schema_version 2):
-          domains:         [host, ...]   currently-blocked hosts (groups expanded)
-          excluded:        [host, ...]   always-allowed hosts (win over blocks)
-          unblocked:       {host: end_epoch}  configured hosts temporarily allowed,
-                                              with the epoch seconds they re-block
-          pause_until:     float (optional)   blocking fully off until this epoch
-                                              (manual 2-min pause or all-day disable)
-          default_profile: str          profile used when none is given
-          profiles:        {name: {wait, duration, cooldown}}  for the block-page picker
-          schema_version:  int
-          expirations:     {}           legacy field kept for back-compat (unused)
+          domains:           [host, ...]   currently-blocked hosts (groups expanded)
+          excluded:          [host, ...]   always-allowed hosts (win over blocks)
+          unblocked:         {host: end_epoch}  configured hosts temporarily allowed,
+                                                with the epoch seconds they re-block
+          active_sessions:   [{name, domains, end_at}]   currently-open unblocks
+          pending_sessions:  [{name, domains, start_at}]  waiting out a delay
+          waiting_sessions:  [{name, domains}]   queued behind another session
+          pause_until:       float (optional)  blocking fully off until this epoch
+                                                (manual 2-min pause or all-day disable)
+          schema_version:    int
 
         Matching semantics (applied identically by both backends): a host is
         blocked iff it, its www-stripped form, or any parent suffix is in
@@ -177,9 +177,6 @@ class AlwaysBlock:
             'active_sessions': active_session_view,
             'pending_sessions': pending_session_view,
             'waiting_sessions': waiting_session_view,
-            'default_profile': self.config_manager.get_default_profile(),
-            'profiles': self.config_manager.get_profiles_summary(),
-            'expirations': {}  # Legacy field kept for back-compat (proxy ignores it)
         }
 
         # Carry forward any durable pause (manual 2-min pause or all-day disable).
