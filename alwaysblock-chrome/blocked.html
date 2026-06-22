@@ -7,33 +7,27 @@
   <style>
     :root { color-scheme: light dark; }
     body {
-      font-family: -apple-system, system-ui, sans-serif;
-      margin: 0; min-height: 100vh;
+      font-family: -apple-system, system-ui, sans-serif; margin: 0; min-height: 100vh;
       display: flex; align-items: center; justify-content: center;
       background: #11151c; color: #e6e9ef;
     }
     .card {
-      max-width: 460px; width: 90%; padding: 2.2rem;
+      max-width: 480px; width: 90%; padding: 2.2rem;
       background: #1b212b; border: 1px solid #2a3340; border-radius: 14px;
       box-shadow: 0 10px 40px rgba(0,0,0,.35); text-align: center;
     }
     h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
     .host { font-weight: 700; color: #ff8f6b; word-break: break-all; }
-    p.sub { color: #97a3b6; margin: .25rem 0 1.4rem; font-size: .92rem; }
-    label { display: block; text-align: left; font-size: .8rem; color: #97a3b6; margin: 0 0 .3rem; }
-    select, button {
-      font: inherit; border-radius: 9px; border: 1px solid #2a3340;
+    p.sub { color: #97a3b6; margin: .3rem 0 1.3rem; font-size: .92rem; }
+    .cmd {
+      display: flex; gap: .5rem; align-items: stretch;
+      background: #0c1117; border: 1px solid #2a3340; border-radius: 10px; padding: .55rem .65rem;
+      text-align: left;
     }
-    select { width: 100%; padding: .6rem; background: #11151c; color: #e6e9ef; margin-bottom: 1rem; }
-    button.primary {
-      width: 100%; padding: .75rem; background: #3b82f6; color: #fff;
-      border: none; font-weight: 600; cursor: pointer;
-    }
-    button.primary:disabled { background: #2a3340; cursor: default; }
-    .link { margin-top: 1.1rem; font-size: .82rem; }
-    .link a { color: #97a3b6; cursor: pointer; text-decoration: underline; }
-    #status { margin-top: 1.1rem; font-size: .95rem; min-height: 1.4em; }
-    #countdown { font-variant-numeric: tabular-nums; font-size: 1.6rem; font-weight: 700; margin-top: .4rem; }
+    .cmd code { flex: 1; font-size: .95rem; color: #e6e9ef; align-self: center; word-break: break-all; }
+    .cmd button { font: inherit; border: 1px solid #2a3340; background: #1b212b; color: #e6e9ef; border-radius: 8px; padding: .35rem .7rem; cursor: pointer; }
+    #countdown { font-variant-numeric: tabular-nums; font-size: 1.9rem; font-weight: 700; margin-top: .3rem; }
+    #foot { margin-top: 1.3rem; font-size: .8rem; color: #97a3b6; }
     .hidden { display: none; }
   </style>
 </head>
@@ -42,22 +36,20 @@
     <h1>Blocked by AlwaysBlock</h1>
     <p class="sub"><span class="host" id="host">this site</span></p>
 
-    <div id="request">
-      <label for="profile">Unblock with</label>
-      <select id="profile"></select>
-      <button class="primary" id="unblock">Request access</button>
+    <div id="cmd-view">
+      <p class="sub">To open access, run this in your terminal:</p>
+      <div class="cmd">
+        <code id="cmd">alwaysblock unblock …</code>
+        <button id="copy">Copy</button>
+      </div>
     </div>
 
-    <div id="waiting" class="hidden">
-      <p class="sub">Waiting for your access window to open…</p>
+    <div id="wait-view" class="hidden">
+      <p class="sub">Access is opening — this tab will continue automatically.</p>
       <div id="countdown">--:--</div>
     </div>
 
-    <div id="status"></div>
-
-    <div class="link">
-      <a id="disable">Disable blocking until midnight</a>
-    </div>
+    <p id="foot"></p>
   </div>
   <script src="blocked.js"></script>
 </body>

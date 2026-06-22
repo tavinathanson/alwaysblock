@@ -1,8 +1,6 @@
-// blocked.js — the unblock UI shown when DNR redirects a blocked navigation here.
-//
-// It holds NO blocking policy. It asks the bridge what the rules are, sends an
-// unblock command, then polls the bridge until the site is actually allowed and
-// returns you there. All timing decisions are made by the brain.
+// blocked.js — shown when a blocked navigation is redirected here. It does NOT
+// request access (that's the CLI's job). It tells you the exact command to run,
+// reflects status, and sends you back to the site the moment access opens.
 
 const BRIDGE = "http://127.0.0.1:8906";
 
@@ -24,113 +22,74 @@ function isBlocked(h, state) {
   if (matches(h, state && state.excluded)) return false;
   return matches(h, state && state.domains);
 }
+function pendingFor(h, state) {
+  return (state.pending_sessions || []).find((s) => matches(h, s.domains)) || null;
+}
 
 async function getState() {
   const res = await fetch(`${BRIDGE}/state`, { cache: "no-store" });
   if (!res.ok) throw new Error(`bridge ${res.status}`);
   return res.json();
 }
-async function command(path, body) {
-  const res = await fetch(`${BRIDGE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {})
-  });
-  return res.json();
-}
-function nudgeServiceWorker() {
-  // Ask the SW to refresh rules immediately so we don't wait for its poll tick.
-  try { chrome.runtime.sendMessage({ type: "refresh" }); } catch (_) {}
-}
-
-// --- profile picker -------------------------------------------------------
-let profiles = {};
-async function init() {
+async function resolveTarget() {
   try {
-    const state = await getState();
-    profiles = state.profiles || {};
-    const sel = $("profile");
-    sel.innerHTML = "";
-    for (const [name, meta] of Object.entries(profiles)) {
-      const opt = document.createElement("option");
-      const wait = meta.wait, dur = meta.duration;
-      opt.value = name;
-      opt.textContent = `${name} — ~${wait} min wait, ${dur} min access`;
-      if (name === state.default_profile) opt.selected = true;
-      sel.appendChild(opt);
-    }
-    if (!Object.keys(profiles).length) {
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.textContent = "default";
-      sel.appendChild(opt);
-    }
-  } catch (e) {
-    setStatus(`Can't reach AlwaysBlock (${e.message}). Is the bridge running?`);
-    $("unblock").disabled = true;
-  }
+    const res = await fetch(`${BRIDGE}/resolve?host=${encodeURIComponent(host)}`, { cache: "no-store" });
+    const data = await res.json();
+    return data.target || null;
+  } catch (_) { return null; }
 }
 
-function setStatus(msg) { $("status").textContent = msg || ""; }
+// --- the unblock command --------------------------------------------------
+let command = `alwaysblock unblock ${host}`;
+async function initCommand() {
+  const target = await resolveTarget();
+  if (target) command = `alwaysblock unblock ${target}`;
+  $("cmd").textContent = command;
+}
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(command); $("copy").textContent = "Copied"; }
+  catch (_) { $("copy").textContent = "Copy failed"; }
+  setTimeout(() => { $("copy").textContent = "Copy"; }, 1500);
+});
 
-// --- estimated countdown + authoritative poll-to-redirect -----------------
-let pollTimer = null;
-let countdownTimer = null;
-
-function startCountdown(minutes) {
-  let remaining = Math.max(0, Math.round(minutes * 60));
-  const tick = () => {
-    const m = String(Math.floor(remaining / 60)).padStart(2, "0");
-    const s = String(remaining % 60).padStart(2, "0");
-    $("countdown").textContent = remaining > 0 ? `${m}:${s}` : "almost…";
-    if (remaining > 0) remaining -= 1;
-  };
-  tick();
-  countdownTimer = setInterval(tick, 1000);
+// --- view switching + auto-redirect ---------------------------------------
+function showCmd() { $("cmd-view").classList.remove("hidden"); $("wait-view").classList.add("hidden"); }
+function showWait(startEpoch) {
+  $("cmd-view").classList.add("hidden");
+  $("wait-view").classList.remove("hidden");
+  const secs = Math.max(0, Math.round(startEpoch - Date.now() / 1000));
+  const m = String(Math.floor(secs / 60)).padStart(2, "0");
+  const s = String(secs % 60).padStart(2, "0");
+  $("countdown").textContent = secs > 0 ? `${m}:${s}` : "almost…";
 }
 
-function startPolling() {
-  pollTimer = setInterval(async () => {
-    try {
-      const state = await getState();
-      if (!isBlocked(host, state)) {
-        clearInterval(pollTimer); clearInterval(countdownTimer);
-        $("countdown").textContent = "open!";
-        if (originalUrl) location.replace(originalUrl);
-      }
-    } catch (_) { /* transient; keep polling */ }
-  }, 3000);
-}
+async function tick() {
+  let state;
+  try { state = await getState(); }
+  catch (_) { $("foot").textContent = "Can't reach AlwaysBlock — is the bridge running?"; return; }
 
-async function requestAccess() {
-  const profile = $("profile").value;
-  $("unblock").disabled = true;
-  setStatus("Requesting…");
-  const result = await command("/unblock", { domain: host, profile });
-  nudgeServiceWorker();
-  if (!result.ok) {
-    $("unblock").disabled = false;
-    setStatus(result.output || "Couldn't start an unblock for this site.");
+  if (!isBlocked(host, state)) {
+    $("foot").textContent = "Access open — continuing…";
+    // Make the service worker drop the DNR block rule before we navigate, or
+    // the redirect would bounce us right back here until its next poll tick.
+    try { await chrome.runtime.sendMessage({ type: "refresh" }); } catch (_) {}
+    if (originalUrl) location.replace(originalUrl);
     return;
   }
-  // Switch to the waiting view. The countdown is an estimate from the profile's
-  // base wait; the redirect itself is driven by the authoritative poll below.
-  $("request").classList.add("hidden");
-  $("waiting").classList.remove("hidden");
-  setStatus("");
-  const est = (profiles[profile] && profiles[profile].wait) || 5;
-  startCountdown(est);
-  startPolling();
+
+  const pending = pendingFor(host, state);
+  if (pending) {
+    showWait(pending.start_at);
+  } else {
+    showCmd();
+  }
+
+  const blockedCount = (state.domains || []).length;
+  const activeCount = (state.active_sessions || []).length;
+  $("foot").textContent = `Blocking on · ${blockedCount} sites blocked`
+    + (activeCount ? ` · ${activeCount} unblocked` : "");
 }
 
-async function disableToday() {
-  setStatus("Disabling until midnight…");
-  await command("/disable", {});
-  nudgeServiceWorker();
-  // Give the SW a beat to clear rules, then return to the site.
-  setTimeout(() => { if (originalUrl) location.replace(originalUrl); }, 1200);
-}
-
-$("unblock").addEventListener("click", requestAccess);
-$("disable").addEventListener("click", disableToday);
-init();
+initCommand();
+tick();
+setInterval(tick, 2000);

@@ -95,18 +95,35 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self._send(204, {})
 
     def do_GET(self):
-        if self.path.split("?", 1)[0] != "/state":
-            return self._send(404, {"error": "not found"})
-        try:
-            brain = _new_brain()
-            # Advance sessions (expire finished, activate pending/queued) so a
-            # poll keeps the extension's view current with no expiry daemon.
-            brain._process_expired_sessions()
-            state = brain._write_state()
-            self._send(200, state)
-        except Exception as e:  # noqa: BLE001
-            logger.exception("Failed to build state")
-            self._send(500, {"error": str(e)})
+        from urllib.parse import urlsplit, parse_qs
+        parts = urlsplit(self.path)
+        route = parts.path
+
+        if route == "/state":
+            try:
+                brain = _new_brain()
+                # Advance sessions (expire finished, activate pending/queued) so a
+                # poll keeps the extension's view current with no expiry daemon.
+                brain._process_expired_sessions()
+                state = brain._write_state()
+                self._send(200, state)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("Failed to build state")
+                self._send(500, {"error": str(e)})
+            return
+
+        if route == "/resolve":
+            # Map a visited host to the config target the CLI understands, so the
+            # block page can show an exact `alwaysblock unblock <target>` command.
+            host = (parse_qs(parts.query).get("host", [""])[0] or "").strip()
+            try:
+                target = _new_brain().config_manager.resolve_host_to_target(host)
+                self._send(200, {"host": host, "target": target})
+            except Exception as e:  # noqa: BLE001
+                self._send(500, {"error": str(e)})
+            return
+
+        self._send(404, {"error": "not found"})
 
     def do_POST(self):
         route = self.path.split("?", 1)[0]

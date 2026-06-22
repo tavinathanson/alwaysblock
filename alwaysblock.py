@@ -133,21 +133,38 @@ class AlwaysBlock:
                 # end_time already a number
                 unblocked_until[domain] = float(end_time)
 
-        # Per-session view (target name + expiry) so the extension popup can show
-        # "what's currently unblocked" the same way `alwaysblock status` does,
-        # instead of a noisy list of every expanded member domain.
-        active_session_view = []
-        for session in active_sessions:
-            end_time = session['end_at']
+        # Per-session views so the extension can mirror `alwaysblock status`
+        # (active / pending / queued), instead of showing a noisy list of every
+        # expanded member domain. 'domains' is carried so the block page can tell
+        # whether the page's host is covered by a given session.
+        def _epoch(dt):
             try:
-                end_epoch = end_time.timestamp()
+                return dt.timestamp()
             except AttributeError:
-                end_epoch = float(end_time)
-            active_session_view.append({
-                'name': session.get('target_name') or ', '.join(session['domains']),
-                'end_at': end_epoch,
-            })
-        active_session_view.sort(key=lambda s: s['end_at'])
+                return float(dt)
+
+        active_session_view = sorted((
+            {
+                'name': s.get('target_name') or ', '.join(s['domains']),
+                'domains': s['domains'],
+                'end_at': _epoch(s['end_at']),
+            } for s in active_sessions
+        ), key=lambda s: s['end_at'])
+
+        pending_session_view = sorted((
+            {
+                'name': s.get('target_name') or ', '.join(s['domains']),
+                'domains': s['domains'],
+                'start_at': _epoch(s['start_at']),
+            } for s in self.db.get_pending_sessions()
+        ), key=lambda s: s['start_at'])
+
+        waiting_session_view = [
+            {
+                'name': s.get('target_name') or ', '.join(s['domains']),
+                'domains': s['domains'],
+            } for s in self.db.get_waiting_sessions()
+        ]
 
         # Backend-agnostic blocking state. 'domains'/'excluded'/'pause_until'
         # are the original proxy contract and are unchanged; everything else is
@@ -158,6 +175,8 @@ class AlwaysBlock:
             'excluded': sorted(list(excluded_domains)),
             'unblocked': unblocked_until,
             'active_sessions': active_session_view,
+            'pending_sessions': pending_session_view,
+            'waiting_sessions': waiting_session_view,
             'default_profile': self.config_manager.get_default_profile(),
             'profiles': self.config_manager.get_profiles_summary(),
             'expirations': {}  # Legacy field kept for back-compat (proxy ignores it)
