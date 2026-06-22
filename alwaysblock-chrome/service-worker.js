@@ -69,8 +69,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === REFRESH_ALARM || alarm.name === REBLOCK_ALARM) refresh();
 });
 
-// Let the block page and options page trigger an immediate refresh after an
-// action (unblock / disable / resume) so rules update without waiting a tick.
+// The block page asks for an immediate rule refresh just before it redirects
+// you back to a now-unblocked site, so DNR drops the block rule without waiting
+// for the next poll tick (otherwise the redirect would bounce back here).
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === "refresh") {
     refresh().then(() => sendResponse({ ok: true }));
