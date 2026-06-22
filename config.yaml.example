@@ -2,6 +2,26 @@
 
 default_profile: unblock
 
+# Which enforcement backend(s) this machine uses. This is YOUR choice per
+# machine — there is no repo-wide default. If you omit this block entirely,
+# AlwaysBlock behaves exactly as it always has: proxy on, extension off.
+#
+#   proxy:     system-wide HTTP/HTTPS proxy. Covers every app and browser,
+#              including Safari and Chrome Incognito. Needs sudo (it manages the
+#              macOS system proxy). This is the historical backend.
+#   extension: the Chrome extension (load it from the alwaysblock-chrome/ folder).
+#              Covers Chrome tabs only — including tabs whose traffic a separate
+#              proxy extension (e.g. SwitchyOmega) reroutes around the system
+#              proxy. Needs no sudo; runs as a per-user LaunchAgent.
+#
+# Run both for full coverage: the extension blocks inside Chrome even when a
+# proxy extension would bypass the system proxy, and the system proxy covers
+# Safari, Incognito, and everything non-Chrome.
+#
+# backends:
+#   proxy: true
+#   extension: true
+
 # Globally excluded domains (always allowed, even if parent domain is blocked)
 excluded_domains:
   - accounts.google.com   # Allow Google accounts (for GSuite login)

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "AlwaysBlock",
+  "version": "1.0.0",
+  "description": "Chrome backend for AlwaysBlock. Blocks distracting sites with friction. All blocking logic lives in the local AlwaysBlock brain; this extension only enforces what the brain computes.",
+  "permissions": [
+    "declarativeNetRequest",
+    "alarms",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8906/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "AlwaysBlock",
+    "default_popup": "options.html"
+  },
+  "options_page": "options.html",
+  "web_accessible_resources": [
+    {
+      "resources": ["blocked.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

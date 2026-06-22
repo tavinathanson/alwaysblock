@@ -55,6 +55,52 @@ class ConfigManager:
         if isinstance(excluded, list):
             return list(set(excluded))
         return []
+
+    def get_backends(self) -> Dict[str, bool]:
+        """Return which enforcement backends are enabled for this machine.
+
+        Two independent backends can block, alone or together:
+          - 'proxy':     the system-wide HTTP/HTTPS proxy (covers every app and
+                         browser, including Safari and Chrome Incognito).
+          - 'extension': the Chrome extension (covers Chrome tabs, including
+                         tabs whose traffic a third-party proxy extension reroutes
+                         away from the system proxy).
+
+        This is intentionally a per-machine decision living in the user's local
+        config.yaml, NOT a repo default. When the key is absent we fall back to
+        proxy-only, which is the historical behavior, so existing installs are
+        unaffected.
+        """
+        backends = self._config_data.get('backends', {})
+        if not isinstance(backends, dict):
+            backends = {}
+        return {
+            'proxy': bool(backends.get('proxy', True)),
+            'extension': bool(backends.get('extension', False)),
+        }
+
+    def get_profiles_summary(self) -> Dict[str, Any]:
+        """Compact, side-effect-free view of profiles for UI clients (the block
+        page's profile picker). Returns {name: {wait, duration, cooldown}}.
+
+        'wait' here is the profile's *base* wait in minutes; the real wait shown
+        to the user is computed server-side by calculate_timing() at unblock time
+        (it can add concurrent penalties and tag overrides). This is only enough
+        for the picker to show a rough "~N min" next to each profile name.
+        """
+        summary = {}
+        for name, profile in self.profiles.items():
+            if not isinstance(profile, dict):
+                profile = {}
+            wait = profile.get('wait', 5)
+            if isinstance(wait, dict):
+                wait = wait.get('base', 5)
+            summary[name] = {
+                'wait': wait,
+                'duration': profile.get('duration', 30),
+                'cooldown': profile.get('cooldown', 0),
+            }
+        return summary
     
     def resolve_domains(self, targets: List[str]) -> tuple[List[str], List[str]]:
         """Resolve domain names/groups to actual domains
@@ -112,6 +158,39 @@ class ConfigManager:
 
         return (list(set(domains)), invalid)
     
+    def resolve_host_to_target(self, host: str) -> Optional[str]:
+        """Map a concrete browser host to the config target that unblocks it.
+
+        The Chrome extension only knows the host the user navigated to (which may
+        be a subdomain like 'old.reddit.com' or a group member like 'x.com').
+        unblock() expects a config key — a domain name or a group name — so we
+        translate here, picking the most specific (longest) matching member and
+        returning its group name when it belongs to a group.
+
+        Returns None if the host isn't covered by any configured domain.
+        """
+        host = host.split(':')[0].strip().lower()
+        if host.startswith('www.'):
+            host = host[4:]
+
+        domain_config = self._config_data.get('domains', {})
+        best_target = None
+        best_len = -1
+
+        for name, config in domain_config.items():
+            if isinstance(config, dict) and 'domains' in config:
+                members = [(m, name) for m in config['domains']]  # member -> group name
+            else:
+                members = [(name, name)]
+            for member, target in members:
+                member_l = str(member).lower()
+                if host == member_l or host.endswith('.' + member_l):
+                    if len(member_l) > best_len:
+                        best_len = len(member_l)
+                        best_target = target
+
+        return best_target
+
     def is_domain_blocked(self, domain: str) -> bool:
         """Check if a domain is currently blocked based on configuration and active sessions"""
         if not self.db:

@@ -18,8 +18,8 @@ def main():
             # Process expired and pending sessions
             ab._process_expired_sessions()
 
-            # Update domains JSON for proxy
-            ab._write_domains_for_proxy()
+            # Recompute and publish blocking state for whichever backends read it
+            ab._write_state()
 
         except Exception as e:
             print(f"Error processing sessions: {e}", file=sys.stderr)

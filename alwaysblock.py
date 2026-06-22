@@ -36,12 +36,21 @@ class AlwaysBlock:
         self.config_path = Path.home() / '.config' / 'alwaysblock' / 'config.yaml'
         self.db_path = Path.home() / '.local' / 'share' / 'alwaysblock' / 'alwaysblock.db'
 
-        # JSON file for proxy (using /tmp for easy access)
-        self.json_path = Path('/tmp/alwaysblock_domains.json')
+        # Shared state file read by the proxy (and served by the bridge). Path is
+        # overridable via env so tests / alternate setups can isolate it; it
+        # defaults to the historical location so production is unchanged.
+        self.json_path = Path(os.environ.get(
+            'ALWAYSBLOCK_STATE_FILE', '/tmp/alwaysblock_domains.json'))
 
         # PID file for proxy daemon (use /tmp so both sudo and non-sudo can access)
         self.pid_file = Path('/tmp/alwaysblock_proxy.pid')
         self.session_manager_pid_file = Path('/tmp/alwaysblock_session_manager.pid')
+
+        # Chrome-extension bridge (loopback HTTP, no sudo). The proxy and the
+        # bridge are independent backends; either or both can run.
+        self.bridge_pid_file = Path('/tmp/alwaysblock_bridge.pid')
+        self.bridge_host = '127.0.0.1'
+        self.bridge_port = 8906
 
         # Initialize components
         self.db = Database(self.db_path)
@@ -49,8 +58,37 @@ class AlwaysBlock:
         self.config_manager.load()  # Load the config
         self.system_proxy = SystemProxy(proxy_port=8905)
 
-    def _write_domains_for_proxy(self):
-        """Write current blocked domains to JSON file for transparent proxy"""
+    def _write_state(self):
+        """Compute the current blocking state and write it to the shared state
+        file, returning the same dict.
+
+        This is the single seam between the brain (config + sessions + timing)
+        and every enforcement backend. Both backends read this exact blob:
+          - the transparent proxy (http_proxy.py) watches the file by mtime;
+          - the Chrome extension's bridge (bridge.py) serves it over loopback.
+
+        Neither backend re-derives blocking logic — they only apply what is
+        computed here, which is what keeps the two backends in lockstep no matter
+        which one (or both) is running.
+
+        State blob schema (schema_version 2):
+          domains:         [host, ...]   currently-blocked hosts (groups expanded)
+          excluded:        [host, ...]   always-allowed hosts (win over blocks)
+          unblocked:       {host: end_epoch}  configured hosts temporarily allowed,
+                                              with the epoch seconds they re-block
+          pause_until:     float (optional)   blocking fully off until this epoch
+                                              (manual 2-min pause or all-day disable)
+          default_profile: str          profile used when none is given
+          profiles:        {name: {wait, duration, cooldown}}  for the block-page picker
+          schema_version:  int
+          expirations:     {}           legacy field kept for back-compat (unused)
+
+        Matching semantics (applied identically by both backends): a host is
+        blocked iff it, its www-stripped form, or any parent suffix is in
+        'domains' AND no such form is in 'excluded' (excluded always wins). The
+        Chrome backend gets this for free from declarativeNetRequest
+        'requestDomains', which matches a domain and all its subdomains.
+        """
         # Get all configured domains
         all_domains = self.config_manager.get_all_configured_domains()
 
@@ -84,11 +122,28 @@ class AlwaysBlock:
         # Get excluded domains from config
         excluded_domains = self.config_manager.get_excluded_domains()
 
-        # Convert to format expected by proxy
+        # Map each temporarily-unblocked host to the epoch it re-blocks, so the
+        # extension can show a countdown and set a precise re-block alarm rather
+        # than waiting for the next poll.
+        unblocked_until = {}
+        for domain, end_time in expirations.items():
+            try:
+                unblocked_until[domain] = end_time.timestamp()
+            except AttributeError:
+                # end_time already a number
+                unblocked_until[domain] = float(end_time)
+
+        # Backend-agnostic blocking state. 'domains'/'excluded'/'pause_until'
+        # are the original proxy contract and are unchanged; everything else is
+        # additive (the proxy ignores unknown keys).
         domains_data = {
+            'schema_version': 2,
             'domains': sorted(list(expanded_blocked)),
             'excluded': sorted(list(excluded_domains)),
-            'expirations': {}  # Proxy doesn't use temporary blocks for now
+            'unblocked': unblocked_until,
+            'default_profile': self.config_manager.get_default_profile(),
+            'profiles': self.config_manager.get_profiles_summary(),
+            'expirations': {}  # Legacy field kept for back-compat (proxy ignores it)
         }
 
         # Carry forward any durable pause (manual 2-min pause or all-day disable).
@@ -129,11 +184,13 @@ class AlwaysBlock:
                     # Clean up temp file since we wrote directly
                     os.unlink(temp_path)
                 except Exception as write_error:
-                    # Can't write either - clean up and give up
+                    # Can't write either - clean up and give up. We still return
+                    # the computed blob so the bridge can serve it from memory
+                    # even if the on-disk file is stuck with bad permissions.
                     os.unlink(temp_path)
                     print(f"Warning: Could not update {self.json_path}: {write_error}")
                     print(f"Run 'sudo rm {self.json_path}' to reset permissions")
-                    return
+                    return domains_data
         except Exception as e:
             # Clean up temp file if something went wrong
             try:
@@ -143,6 +200,13 @@ class AlwaysBlock:
             # Only raise if it's not a permission error we already handled
             if not isinstance(e, PermissionError):
                 raise e
+
+        return domains_data
+
+    # Back-compat alias: the proxy-era name. Existing callers and
+    # session_manager.py call _write_domains_for_proxy(); keep it working so the
+    # rename to _write_state() stays a no-op for behavior.
+    _write_domains_for_proxy = _write_state
 
     def _process_expired_sessions(self):
         """Check for and process expired sessions"""
@@ -191,24 +255,35 @@ class AlwaysBlock:
             print(f"   Re-enable now with: alwaysblock resume")
         print(f"")
 
-        # Check proxy status
-        proxy_running = self.is_proxy_running()
-        print(f"Proxy daemon: {'🟢 Running' if proxy_running else '🔴 Stopped'}")
+        # Which backends this machine opted into (proxy, extension, or both).
+        backends = self.config_manager.get_backends()
+        enabled = [name for name in ('proxy', 'extension') if backends[name]]
+        print(f"Backends:     {', '.join(enabled) if enabled else 'none (nothing will block!)'}")
 
-        # Check system proxy status
+        # Backend A: system proxy (covers all apps/browsers, incl. Safari & Incognito)
+        proxy_running = self.is_proxy_running()
         proxy_status = self.system_proxy.get_status()
         sys_proxy_enabled = proxy_status.get('enabled', False)
-        print(f"System proxy: {'🟢 Enabled' if sys_proxy_enabled else '🔴 Disabled'} ({proxy_status.get('enabled_count', 0)}/{proxy_status.get('services_count', 0)} services)")
+        if backends['proxy']:
+            print(f"Proxy daemon: {'🟢 Running' if proxy_running else '🔴 Stopped'}")
+            print(f"System proxy: {'🟢 Enabled' if sys_proxy_enabled else '🔴 Disabled'} ({proxy_status.get('enabled_count', 0)}/{proxy_status.get('services_count', 0)} services)")
+
+        # Backend B: Chrome extension bridge (covers Chrome tabs only)
+        bridge_running = self.is_bridge_running()
+        if backends['extension']:
+            print(f"Ext. bridge:  {'🟢 Running' if bridge_running else '🔴 Stopped'} ({self.bridge_host}:{self.bridge_port})")
 
         # Check auto-start status
         autostart_enabled = Path("/Library/LaunchDaemons/com.alwaysblock.daemon.plist").exists()
         print(f"Auto-start:   {'🟢 Enabled' if autostart_enabled else '🔴 Disabled'}")
         print(f"")
 
-        if not proxy_running:
+        if backends['proxy'] and not proxy_running:
             print("⚠️  Proxy daemon not running. Start it with: alwaysblock start")
-        if not sys_proxy_enabled:
+        if backends['proxy'] and not sys_proxy_enabled:
             print("⚠️  System proxy not enabled. Enable with: alwaysblock start")
+        if backends['extension'] and not bridge_running:
+            print("⚠️  Extension bridge not running. Start it with: alwaysblock bridge start")
         print(f"")
 
         if active_sessions:
@@ -281,6 +356,102 @@ class AlwaysBlock:
             except:
                 pass
             return False
+
+    # ------------------------------------------------------------------
+    # Chrome-extension bridge (backend B)
+    #
+    # A tiny loopback HTTP server (bridge.py) that exposes the same brain the
+    # CLI uses to the Chrome extension. It runs as the user (no sudo, no system
+    # changes) and is normally supervised by a per-user LaunchAgent; these
+    # methods exist so it can also be driven by hand for testing.
+    # ------------------------------------------------------------------
+    def is_bridge_running(self):
+        """Check if the bridge is listening on its loopback port."""
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.25)
+            return s.connect_ex((self.bridge_host, self.bridge_port)) == 0
+
+    def run_bridge(self):
+        """Run the bridge in the foreground (used by the LaunchAgent)."""
+        from bridge import serve
+        serve(host=self.bridge_host, port=self.bridge_port)
+
+    def start_bridge(self):
+        """Start the bridge as a background daemon (manual use)."""
+        if self.is_bridge_running():
+            print(f"Bridge is already running on {self.bridge_host}:{self.bridge_port}")
+            return
+
+        bridge_script = Path(__file__).parent / 'bridge.py'
+        log_file = self.bridge_pid_file.parent / 'bridge.log'
+        log_file.touch(exist_ok=True)
+        try:
+            os.chmod(log_file, 0o666)
+        except PermissionError:
+            pass
+
+        with open(log_file, 'a') as log:
+            process = subprocess.Popen(
+                [sys.executable, str(bridge_script)],
+                stdout=log,
+                stderr=log,
+                start_new_session=True
+            )
+
+        with open(self.bridge_pid_file, 'w') as f:
+            f.write(str(process.pid))
+        try:
+            os.chmod(self.bridge_pid_file, 0o666)
+        except PermissionError:
+            pass
+
+        time.sleep(1.0)
+        if self.is_bridge_running():
+            print(f"✅ Bridge started (PID: {process.pid}) on {self.bridge_host}:{self.bridge_port}")
+            print(f"   Logs: {log_file}")
+        else:
+            print("❌ Failed to start bridge")
+            print(f"   Check logs: {log_file}")
+
+    def stop_bridge(self):
+        """Stop the background bridge daemon."""
+        if not self.bridge_pid_file.exists():
+            # Nothing we started; it may be under the LaunchAgent instead.
+            if self.is_bridge_running():
+                print("Bridge is running but not under our PID file "
+                      "(likely the LaunchAgent). Stop it with: "
+                      "launchctl unload ~/Library/LaunchAgents/com.alwaysblock.bridge.plist")
+            else:
+                print("Bridge is not running")
+            return
+        try:
+            with open(self.bridge_pid_file, 'r') as f:
+                pid = int(f.read().strip())
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            self.bridge_pid_file.unlink(missing_ok=True)
+            print("✅ Bridge stopped")
+        except (ValueError, OSError):
+            self.bridge_pid_file.unlink(missing_ok=True)
+            print("Bridge was not running")
+
+    def bridge(self, action='status'):
+        """Control the bridge: run (foreground) | start | stop | status."""
+        if action == 'run':
+            self.run_bridge()
+        elif action == 'start':
+            self.start_bridge()
+        elif action == 'stop':
+            self.stop_bridge()
+        else:  # status
+            running = self.is_bridge_running()
+            print(f"Bridge: {'🟢 Running' if running else '🔴 Stopped'} "
+                  f"({self.bridge_host}:{self.bridge_port})")
+            if not running:
+                print("   Start it with: alwaysblock bridge start")
 
     def start_proxy(self):
         """Start the transparent proxy daemon"""
@@ -1067,24 +1238,48 @@ class AlwaysBlock:
         print("")
 
     def start(self):
-        """Start all AlwaysBlock services"""
+        """Start the enabled AlwaysBlock backends (see config 'backends')."""
+        backends = self.config_manager.get_backends()
         print("Starting AlwaysBlock services...")
-        self.start_proxy()
+        print(f"Backends: proxy={'on' if backends['proxy'] else 'off'}, "
+              f"extension={'on' if backends['extension'] else 'off'}")
         print("")
-        self.enable_system_proxy()
-        print("")
-        print("✅ All services started")
+
+        if backends['proxy']:
+            self.start_proxy()
+            print("")
+            self.enable_system_proxy()
+            print("")
+
+        if backends['extension']:
+            self.start_bridge()
+            print("")
+
+        if not backends['proxy'] and not backends['extension']:
+            print("⚠️  No backends enabled in config. Set 'backends.proxy' and/or "
+                  "'backends.extension' to true in ~/.config/alwaysblock/config.yaml")
+            print("")
+
+        print("✅ Done")
         print("")
         self.status()
 
     def stop(self):
-        """Stop all AlwaysBlock services"""
+        """Stop the enabled AlwaysBlock backends."""
+        backends = self.config_manager.get_backends()
         print("Stopping AlwaysBlock services...")
-        self.disable_system_proxy()
-        print("")
-        self.stop_proxy()
-        print("")
-        print("✅ All services stopped")
+
+        if backends['proxy']:
+            self.disable_system_proxy()
+            print("")
+            self.stop_proxy()
+            print("")
+
+        if backends['extension']:
+            self.stop_bridge()
+            print("")
+
+        print("✅ All enabled services stopped")
 
     def restart(self):
         """Restart all AlwaysBlock services"""
@@ -1125,6 +1320,21 @@ def require_sudo():
         os.execvp('sudo', args)
 
 
+def rewrite_profile_shortcut(argv, available_profiles):
+    """Expand a profile-name shortcut into an explicit unblock command.
+
+    'alwaysblock bypass reddit' -> 'alwaysblock unblock -p bypass reddit'
+    'alwaysblock bypass'        -> 'alwaysblock unblock -p bypass'
+
+    Returns argv unchanged when the first token isn't a configured profile.
+    Pure function so it can be unit-tested (see tests/test_cli_shortcuts.py) —
+    it used to be inline in main() and was easy to break unnoticed.
+    """
+    if len(argv) > 1 and argv[1] in available_profiles:
+        return [argv[0], 'unblock', '-p', argv[1]] + argv[2:]
+    return argv
+
+
 def main():
     # Check if first arg might be a profile shortcut
     # We need to do this before argparse to dynamically rewrite args
@@ -1144,13 +1354,23 @@ def main():
             except:
                 pass
 
-        # If the command matches a profile name, rewrite args
-        # Transform: alwaysblock bypass reddit -> alwaysblock unblock -p bypass reddit
-        # Transform: alwaysblock bypass -> alwaysblock unblock -p bypass
-        if potential_command in available_profiles:
-            profile_name = sys.argv[1]
-            remaining_args = sys.argv[2:]  # Could be empty or domain names
-            sys.argv = [sys.argv[0], 'unblock', '-p', profile_name] + remaining_args
+        # If the command matches a profile name, rewrite to an explicit unblock.
+        sys.argv = rewrite_profile_shortcut(sys.argv, available_profiles)
+
+    # Decide up front whether the proxy backend is enabled, so start/stop only
+    # demand sudo when there's actually a system proxy to manage. Extension-only
+    # users never get a sudo prompt. Default (key absent) is proxy-on, matching
+    # historical behavior.
+    proxy_backend_enabled = True
+    try:
+        import yaml
+        _cfg_path = Path.home() / '.config' / 'alwaysblock' / 'config.yaml'
+        if _cfg_path.exists():
+            with open(_cfg_path, 'r') as f:
+                _backends = (yaml.safe_load(f) or {}).get('backends', {}) or {}
+                proxy_backend_enabled = bool(_backends.get('proxy', True))
+    except Exception:
+        pass
 
     parser = argparse.ArgumentParser(description='AlwaysBlock - Website blocker with transparent proxy')
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
@@ -1159,9 +1379,15 @@ def main():
     subparsers.add_parser('status', help='Show current status')
 
     # Service management (high-level)
-    subparsers.add_parser('start', help='Start all services (proxy + system proxy)')
-    subparsers.add_parser('stop', help='Stop all services (proxy + system proxy)')
-    subparsers.add_parser('restart', help='Restart all services')
+    subparsers.add_parser('start', help='Start enabled backends (see config "backends")')
+    subparsers.add_parser('stop', help='Stop enabled backends')
+    subparsers.add_parser('restart', help='Restart enabled backends')
+
+    # Chrome-extension bridge control (loopback HTTP on 127.0.0.1:8906, no sudo)
+    bridge_parser = subparsers.add_parser('bridge', help='Control the Chrome-extension bridge (no sudo)')
+    bridge_parser.add_argument('action', nargs='?', default='status',
+                               choices=['run', 'start', 'stop', 'status'],
+                               help='run (foreground, for LaunchAgent) | start | stop | status')
 
     # Unblock command
     unblock_parser = subparsers.add_parser('unblock', help='Temporarily unblock domains')
@@ -1201,12 +1427,16 @@ def main():
     if not args.command:
         args.command = 'status'
 
-    # Commands that require root
+    # Commands that require root. start/stop/restart only need root when the
+    # proxy backend is on (it manages the system proxy via networksetup); an
+    # extension-only machine runs them with no sudo. The 'bridge' command never
+    # needs root. autostart/uninstall touch /Library, so they always do.
     sudo_commands = {
-        'start', 'stop', 'restart',
         'enable-autostart', 'disable-autostart',
         'uninstall'
     }
+    if proxy_backend_enabled:
+        sudo_commands |= {'start', 'stop', 'restart'}
 
     # Re-exec with sudo if needed
     if args.command in sudo_commands:
@@ -1222,6 +1452,8 @@ def main():
         ab.stop()
     elif args.command == 'restart':
         ab.restart()
+    elif args.command == 'bridge':
+        ab.bridge(args.action)
     elif args.command == 'block-all' or args.command == 'reset':
         ab.block_all()
     elif args.command == 'pause':

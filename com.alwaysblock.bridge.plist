@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- LaunchAgent for the AlwaysBlock Chrome-extension bridge. -->
+    <!-- Runs as YOU (per-user, no root). It only serves a loopback HTTP port  -->
+    <!-- to the Chrome extension and never touches the system, so unlike the   -->
+    <!-- proxy's LaunchDaemon it needs no privileges and no sudo to install.    -->
+
+    <key>Label</key>
+    <string>com.alwaysblock.bridge</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/alwaysblock</string>
+        <string>bridge</string>
+        <string>run</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/alwaysblock_bridge.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/alwaysblock_bridge.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

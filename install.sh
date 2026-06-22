@@ -276,6 +276,30 @@ else
     fi
 fi
 
+# Set up the Chrome-extension bridge if this machine enabled the extension
+# backend. This is a per-user LaunchAgent (no sudo, no system changes) — it only
+# serves a loopback port to the Chrome extension.
+EXT_ENABLED=$("$VENV_PATH/bin/python3" -c "import yaml; print('yes' if (yaml.safe_load(open('$CONFIG_DIR/config.yaml')) or {}).get('backends',{}).get('extension',False) else 'no')" 2>/dev/null || echo no)
+if [ "$EXT_ENABLED" = "yes" ]; then
+    echo ""
+    echo "Setting up the Chrome-extension bridge (no sudo needed)..."
+    AGENT_DIR="$HOME/Library/LaunchAgents"
+    BRIDGE_PLIST="$AGENT_DIR/com.alwaysblock.bridge.plist"
+    mkdir -p "$AGENT_DIR"
+    cp "$SCRIPT_DIR/com.alwaysblock.bridge.plist" "$BRIDGE_PLIST"
+    launchctl unload "$BRIDGE_PLIST" 2>/dev/null || true
+    launchctl load "$BRIDGE_PLIST" 2>/dev/null || true
+    echo "✅ Bridge LaunchAgent installed (runs alwaysblock bridge on 127.0.0.1:8906)"
+    echo ""
+    echo "   Final step — load the Chrome extension (once per Chrome profile):"
+    echo "     1. Open chrome://extensions"
+    echo "     2. Turn on 'Developer mode' (top right)"
+    echo "     3. Click 'Load unpacked' and choose:"
+    echo "          $SCRIPT_DIR/alwaysblock-chrome"
+    echo "   If you use a proxy extension (e.g. SwitchyOmega), make sure it"
+    echo "   bypasses 127.0.0.1 so the extension can reach the bridge."
+fi
+
 echo ""
 echo "✅ Installation complete!"
 echo ""

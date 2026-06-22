@@ -8,6 +8,7 @@ A macOS website blocker that's always running. The friction is always there, so 
 
 - [The Idea](#the-idea)
 - [How It Works (ELI5)](#how-it-works-eli5)
+- [Backends (proxy, Chrome extension, or both)](#backends-proxy-chrome-extension-or-both)
 - [Installation](#installation)
   - [Upgrading](#upgrading)
 - [Quick Start](#quick-start)
@@ -65,6 +66,89 @@ AlwaysBlock uses macOS's system proxy setting. When you try to visit a website, 
 It only sees hostnames (like "reddit.com"), not your browsing content or passwords. Everything runs locally on your Mac. You can disable it anytime in System Settings → Network → Proxies.
 
 For technical details about privacy, security, and how the proxy actually works, see [How It Actually Works](#how-it-actually-works).
+
+---
+
+## Backends (proxy, Chrome extension, or both)
+
+AlwaysBlock can enforce blocking through two independent backends. There is **one
+brain** — your `config.yaml`, the timing/queue logic, and the SQLite session
+state are shared — and each backend is just a different way of applying what the
+brain computes. You pick which backend(s) to run **per machine**, in your own
+`config.yaml`; there is no repo-wide default.
+
+```yaml
+# ~/.config/alwaysblock/config.yaml
+backends:
+  proxy: true        # system-wide proxy (Safari, Chrome, Incognito, every app)
+  extension: true    # Chrome extension (Chrome tabs only)
+```
+
+If you omit the `backends:` block entirely, AlwaysBlock behaves exactly as it
+always has: **proxy on, extension off.**
+
+### What each backend covers
+
+| | **Proxy backend** | **Extension backend** |
+|---|---|---|
+| Scope | Every app & browser, system-wide | Chrome tabs only |
+| Safari / native apps | ✅ covered | ❌ not covered |
+| Chrome Incognito | ✅ covered | ❌ off by default (see below) |
+| Chrome + a proxy extension (e.g. SwitchyOmega) routing around the system proxy | ❌ **bypassed** | ✅ covered |
+| Needs sudo / system changes | Yes (manages the macOS system proxy) | **No** (per-user LaunchAgent on `127.0.0.1:8906`) |
+| When a site is blocked, you see | A refused connection | A friendly block page with an "unblock" button + countdown |
+| Disable on a whim | System Settings → Network → Proxies | Toggle off in `chrome://extensions` |
+
+### Why you might want both
+
+The two backends cover each other's blind spots:
+
+- The **proxy** is system-wide but is bypassed inside a Chrome profile whose
+  traffic a separate proxy extension (like SwitchyOmega) reroutes to its own
+  server — that traffic never reaches the system proxy.
+- The **extension** blocks *inside* Chrome via `declarativeNetRequest`, which
+  acts before Chrome decides where to send the request. So it still blocks even
+  when a proxy extension reroutes traffic — and it doesn't conflict with that
+  proxy extension (different mechanism). It also gives you a real block page
+  instead of a dead connection.
+
+Running **both** means: the extension catches the Chrome-with-proxy-extension
+case, and the proxy catches Safari, Incognito, native apps, and normal Chrome.
+Because both read the same brain, an `alwaysblock unblock reddit` (or the block
+page's button) takes effect everywhere consistently.
+
+> **Note on friction.** Neither backend is an unbreakable lock — this tool is
+> *soft* friction by design (you can always open another browser, toggle the
+> extension off, or disable the system proxy). If you want it to be genuinely
+> hard to bypass, that comes from a managed-policy / MDM force-install of the
+> extension plus disabling Incognito (`IncognitoModeAvailability=Disabled`), not
+> from the code here.
+
+### Setting up the extension backend
+
+1. Set `backends.extension: true` (and `proxy: true` if you want both) in
+   `~/.config/alwaysblock/config.yaml`.
+2. Run `./install.sh`. With the extension enabled it installs a per-user
+   **LaunchAgent** that runs the bridge (`alwaysblock bridge`) on
+   `127.0.0.1:8906` — no sudo, no system changes.
+3. Load the extension in Chrome (once per Chrome profile you use):
+   - Open `chrome://extensions`, enable **Developer mode**,
+   - **Load unpacked** → select the `alwaysblock-chrome/` folder in this repo.
+4. If you use a proxy extension (e.g. SwitchyOmega), make sure it **bypasses
+   `127.0.0.1`/`localhost`** — otherwise the extension can't reach the bridge.
+
+Control the bridge by hand (it normally runs under the LaunchAgent):
+
+```bash
+alwaysblock bridge status   # is the bridge up?
+alwaysblock bridge start    # start it in the background (no sudo)
+alwaysblock bridge stop
+```
+
+The extension itself holds **no blocking logic**: it polls the bridge for the
+current blocklist and POSTs unblock/disable commands back to the brain. Timing,
+queueing, cooldowns, and the disable-until-midnight state all stay in the brain,
+so the two backends can never disagree.
 
 ---
 
