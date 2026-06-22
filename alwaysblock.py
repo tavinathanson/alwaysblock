@@ -28,6 +28,11 @@ def format_time_remaining(seconds):
         return f"{int(seconds / 60)} minutes"
 
 
+def session_display_name(session):
+    """Human label for a session: the requested target, or its domains."""
+    return session.get('target_name') or ', '.join(session['domains'])
+
+
 class AlwaysBlock:
     """AlwaysBlock CLI with transparent proxy management"""
 
@@ -58,9 +63,13 @@ class AlwaysBlock:
         self.config_manager.load()  # Load the config
         self.system_proxy = SystemProxy(proxy_port=8905)
 
-    def _write_state(self):
-        """Compute the current blocking state and write it to the shared state
-        file, returning the same dict.
+    def _write_state(self, write_file=True):
+        """Compute the current blocking state and return it as a dict.
+
+        With write_file=True (the default, used by the CLI and the proxy-side
+        writers) the blob is also written to the shared state file the proxy
+        watches. The bridge passes write_file=False — it only needs the dict to
+        serve over HTTP and shouldn't write the proxy's file on every poll.
 
         This is the single seam between the brain (config + sessions + timing)
         and every enforcement backend. Both backends read this exact blob:
@@ -122,49 +131,31 @@ class AlwaysBlock:
         # Get excluded domains from config
         excluded_domains = self.config_manager.get_excluded_domains()
 
-        # Map each temporarily-unblocked host to the epoch it re-blocks, so the
-        # extension can show a countdown and set a precise re-block alarm rather
-        # than waiting for the next poll.
-        unblocked_until = {}
-        for domain, end_time in expirations.items():
-            try:
-                unblocked_until[domain] = end_time.timestamp()
-            except AttributeError:
-                # end_time already a number
-                unblocked_until[domain] = float(end_time)
-
-        # Per-session views so the extension can mirror `alwaysblock status`
-        # (active / pending / queued), instead of showing a noisy list of every
-        # expanded member domain. 'domains' is carried so the block page can tell
-        # whether the page's host is covered by a given session.
         def _epoch(dt):
             try:
                 return dt.timestamp()
             except AttributeError:
                 return float(dt)
 
-        active_session_view = sorted((
-            {
-                'name': s.get('target_name') or ', '.join(s['domains']),
-                'domains': s['domains'],
-                'end_at': _epoch(s['end_at']),
-            } for s in active_sessions
-        ), key=lambda s: s['end_at'])
+        # Map each temporarily-unblocked host to the epoch it re-blocks, so the
+        # extension can show a countdown and set a precise re-block alarm rather
+        # than waiting for the next poll.
+        unblocked_until = {d: _epoch(t) for d, t in expirations.items()}
 
-        pending_session_view = sorted((
-            {
-                'name': s.get('target_name') or ', '.join(s['domains']),
-                'domains': s['domains'],
-                'start_at': _epoch(s['start_at']),
-            } for s in self.db.get_pending_sessions()
-        ), key=lambda s: s['start_at'])
+        # Per-session views so the extension can mirror `alwaysblock status`
+        # (active / pending / queued), instead of showing a noisy list of every
+        # expanded member domain. 'domains' is carried so the block page can tell
+        # whether the page's host is covered by a given session.
+        def _view(s, **extra):
+            return {'name': session_display_name(s), 'domains': s['domains'], **extra}
 
-        waiting_session_view = [
-            {
-                'name': s.get('target_name') or ', '.join(s['domains']),
-                'domains': s['domains'],
-            } for s in self.db.get_waiting_sessions()
-        ]
+        active_session_view = sorted(
+            (_view(s, end_at=_epoch(s['end_at'])) for s in active_sessions),
+            key=lambda s: s['end_at'])
+        pending_session_view = sorted(
+            (_view(s, start_at=_epoch(s['start_at'])) for s in self.db.get_pending_sessions()),
+            key=lambda s: s['start_at'])
+        waiting_session_view = [_view(s) for s in self.db.get_waiting_sessions()]
 
         # Backend-agnostic blocking state. 'domains'/'excluded'/'pause_until'
         # are the original proxy contract and are unchanged; everything else is
@@ -189,6 +180,9 @@ class AlwaysBlock:
         elif pause_until:
             # Expired: clear it so we don't keep checking a stale value.
             self.db.delete_setting('pause_until')
+
+        if not write_file:
+            return domains_data
 
         # Write to JSON file
         self.json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,11 +230,6 @@ class AlwaysBlock:
 
         return domains_data
 
-    # Back-compat alias: the proxy-era name. Existing callers and
-    # session_manager.py call _write_domains_for_proxy(); keep it working so the
-    # rename to _write_state() stays a no-op for behavior.
-    _write_domains_for_proxy = _write_state
-
     def _process_expired_sessions(self):
         """Check for and process expired sessions"""
         # Expire active sessions that are done (do this first!)
@@ -258,7 +247,7 @@ class AlwaysBlock:
         self._process_expired_sessions()
 
         # Update JSON for proxy
-        self._write_domains_for_proxy()
+        self._write_state()
 
         active_sessions = self.db.get_active_sessions()
         pending_sessions = self.db.get_pending_sessions()
@@ -323,7 +312,7 @@ class AlwaysBlock:
             print(f"Active unblock sessions ({len(active_sessions)}):")
             for session in active_sessions:
                 # Use target_name if available, otherwise show all domains
-                display_name = session.get('target_name') or ', '.join(session['domains'])
+                display_name = session_display_name(session)
                 end_at = session['end_at']
                 remaining = (end_at - datetime.now()).total_seconds()
                 time_str = format_time_remaining(remaining)
@@ -334,7 +323,7 @@ class AlwaysBlock:
             print(f"Pending unblock sessions ({len(pending_sessions)}):")
             for session in pending_sessions:
                 # Use target_name if available, otherwise show all domains
-                display_name = session.get('target_name') or ', '.join(session['domains'])
+                display_name = session_display_name(session)
                 start_at = session['start_at']
                 wait_time = (start_at - datetime.now()).total_seconds()
                 time_str = format_time_remaining(wait_time)
@@ -345,7 +334,7 @@ class AlwaysBlock:
             print(f"Queued (waiting for domain to be free) ({len(waiting_sessions)}):")
             for session in waiting_sessions:
                 # Use target_name if available, otherwise show all domains
-                display_name = session.get('target_name') or ', '.join(session['domains'])
+                display_name = session_display_name(session)
                 print(f"  #{session['id']}: {display_name} - timing will be calculated when domain becomes available")
             print(f"")
 
@@ -572,7 +561,7 @@ class AlwaysBlock:
                     pass
 
         # Write current domains
-        self._write_domains_for_proxy()
+        self._write_state()
 
         # Start proxy in background
         proxy_script = Path(__file__).parent / 'http_proxy.py'
@@ -829,7 +818,7 @@ class AlwaysBlock:
                     session_domains = set(session['domains'])
                     if domains_set & session_domains:  # If any overlap
                         self.db.cancel_session(session['id'])
-                        display_name = session.get('target_name') or ', '.join(session['domains'])
+                        display_name = session_display_name(session)
                         print(f"Cancelled overlapping session #{session['id']}: {display_name}")
 
             # Create session - it will automatically queue if these domains are already active/pending
@@ -869,7 +858,7 @@ class AlwaysBlock:
             print()
 
         # Update JSON for proxy
-        self._write_domains_for_proxy()
+        self._write_state()
 
         if len(session_ids) > 1:
             print(f"✅ Created {len(session_ids)} queued sessions")
@@ -889,9 +878,9 @@ class AlwaysBlock:
     def _set_pause_until(self, pause_until):
         """Persist the pause-until timestamp durably and push it to the proxy"""
         self.db.set_setting('pause_until', repr(float(pause_until)))
-        # _write_domains_for_proxy reads pause_until back from the db and writes
+        # _write_state reads pause_until back from the db and writes
         # it into the proxy's JSON, so blocking turns off immediately.
-        self._write_domains_for_proxy()
+        self._write_state()
 
     def pause(self):
         """Manually pause blocking for 2 minutes (fallback if auto-detection doesn't work)"""
@@ -919,7 +908,7 @@ class AlwaysBlock:
     def resume(self):
         """Resume blocking after a manual pause or all-day disable"""
         self.db.delete_setting('pause_until')
-        self._write_domains_for_proxy()
+        self._write_state()
         print("✅ Blocking resumed")
 
     def block_all(self):
@@ -936,7 +925,7 @@ class AlwaysBlock:
         print(f"Cancelled {total} session{'s' if total != 1 else ''}")
 
         # Update JSON for proxy
-        self._write_domains_for_proxy()
+        self._write_state()
 
         print("All domains are now blocked")
 
@@ -954,7 +943,7 @@ class AlwaysBlock:
             session_id = int(identifier)
             if self.db.cancel_session(session_id):
                 print(f"Cancelled session #{session_id}")
-                self._write_domains_for_proxy()
+                self._write_state()
             else:
                 print(f"Error: Session #{session_id} not found or already completed")
                 sys.exit(1)
@@ -986,12 +975,12 @@ class AlwaysBlock:
         cancelled_count = 0
         for session in matching_sessions:
             if self.db.cancel_session(session['id']):
-                display_name = session.get('target_name') or ', '.join(session['domains'])
+                display_name = session_display_name(session)
                 print(f"Cancelled session #{session['id']}: {display_name}")
                 cancelled_count += 1
 
         if cancelled_count > 0:
-            self._write_domains_for_proxy()
+            self._write_state()
             if cancelled_count > 1:
                 print(f"Total: {cancelled_count} sessions cancelled")
         else:
@@ -1369,41 +1358,26 @@ def rewrite_profile_shortcut(argv, available_profiles):
 
 
 def main():
-    # Check if first arg might be a profile shortcut
-    # We need to do this before argparse to dynamically rewrite args
-    if len(sys.argv) > 1:
-        potential_command = sys.argv[1]
-
-        # Load config to check for profiles (but don't error if config doesn't exist)
-        config_path = Path.home() / '.config' / 'alwaysblock' / 'config.yaml'
-        available_profiles = []
-
-        if config_path.exists():
-            try:
-                import yaml
-                with open(config_path, 'r') as f:
-                    config_data = yaml.safe_load(f) or {}
-                    available_profiles = list(config_data.get('profiles', {}).keys())
-            except:
-                pass
-
-        # If the command matches a profile name, rewrite to an explicit unblock.
-        sys.argv = rewrite_profile_shortcut(sys.argv, available_profiles)
-
-    # Decide up front whether the proxy backend is enabled, so start/stop only
-    # demand sudo when there's actually a system proxy to manage. Extension-only
-    # users never get a sudo prompt. Default (key absent) is proxy-on, matching
-    # historical behavior.
+    # Read config once, before argparse, for the two pre-dispatch decisions:
+    #   - profile-name shortcuts (`alwaysblock bypass` -> `unblock -p bypass`)
+    #   - whether the proxy backend is enabled, so start/stop only demand sudo
+    #     when there's actually a system proxy to manage (extension-only users
+    #     never get a sudo prompt; default is proxy-on, matching old behavior).
+    # Reuse ConfigManager so the parsing and defaults live in exactly one place.
+    available_profiles = []
     proxy_backend_enabled = True
-    try:
-        import yaml
-        _cfg_path = Path.home() / '.config' / 'alwaysblock' / 'config.yaml'
-        if _cfg_path.exists():
-            with open(_cfg_path, 'r') as f:
-                _backends = (yaml.safe_load(f) or {}).get('backends', {}) or {}
-                proxy_backend_enabled = bool(_backends.get('proxy', True))
-    except Exception:
-        pass
+    config_path = Path.home() / '.config' / 'alwaysblock' / 'config.yaml'
+    if config_path.exists():
+        try:
+            cfg = ConfigManager(str(config_path))
+            cfg.load()
+            available_profiles = cfg.get_profile_names()
+            proxy_backend_enabled = cfg.get_backends()['proxy']
+        except Exception:
+            pass
+
+    # If the first arg is a profile name, rewrite to an explicit unblock command.
+    sys.argv = rewrite_profile_shortcut(sys.argv, available_profiles)
 
     parser = argparse.ArgumentParser(description='AlwaysBlock - Website blocker with transparent proxy')
     subparsers = parser.add_subparsers(dest='command', help='Command to run')

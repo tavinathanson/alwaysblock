@@ -37,13 +37,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 logger = logging.getLogger("alwaysblock.bridge")
 
 
-def _new_brain():
-    """Construct a fresh brain instance (imported lazily to avoid a circular
-    import: alwaysblock.py imports serve() from here for `bridge run`)."""
-    from alwaysblock import AlwaysBlock
-    return AlwaysBlock()
-
-
 class BridgeHandler(BaseHTTPRequestHandler):
     # Quieter logs; the brain prints its own messages.
     def log_message(self, fmt, *args):
@@ -62,6 +55,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _brain(self):
+        """The shared brain (built once in serve()), with config re-read so
+        on-disk edits to config.yaml show up without restarting the bridge.
+        Reusing one brain avoids re-initializing the SQLite schema on every poll;
+        only the cheap config reload runs per request."""
+        brain = self.server.brain
+        brain.config_manager.load()
+        return brain
+
     # --- routes (read-only) ------------------------------------------------
     def do_GET(self):
         from urllib.parse import urlsplit, parse_qs
@@ -70,11 +72,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         if route == "/state":
             try:
-                brain = _new_brain()
+                brain = self._brain()
                 # Advance sessions (expire finished, activate pending/queued) so a
                 # poll keeps the extension's view current with no expiry daemon.
                 brain._process_expired_sessions()
-                state = brain._write_state()
+                # write_file=False: the bridge only needs the dict to serve; the
+                # proxy's own writers own the state file.
+                state = brain._write_state(write_file=False)
                 self._send(200, state)
             except Exception as e:  # noqa: BLE001
                 logger.exception("Failed to build state")
@@ -86,7 +90,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             # block page can show an exact `alwaysblock unblock <target>` command.
             host = (parse_qs(parts.query).get("host", [""])[0] or "").strip()
             try:
-                target = _new_brain().config_manager.resolve_host_to_target(host)
+                target = self._brain().config_manager.resolve_host_to_target(host)
                 self._send(200, {"host": host, "target": target})
             except Exception as e:  # noqa: BLE001
                 self._send(500, {"error": str(e)})
@@ -97,9 +101,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 def serve(host="127.0.0.1", port=8906):
     """Run the bridge in the foreground until interrupted."""
+    # Lazy import avoids a circular import (alwaysblock.py imports serve()).
+    from alwaysblock import AlwaysBlock
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [bridge] %(message)s")
     server = ThreadingHTTPServer((host, port), BridgeHandler)
+    # One long-lived brain shared across requests (each DB call opens its own
+    # SQLite connection, so this is thread-safe under the threading server).
+    server.brain = AlwaysBlock()
     logger.info("AlwaysBlock bridge listening on http://%s:%d", host, port)
     try:
         server.serve_forever()

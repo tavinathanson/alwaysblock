@@ -62,4 +62,4 @@ async function render() {
 }
 
 render();
-setInterval(render, 2000); // keep countdowns fresh while open
+setInterval(render, 5000); // keep countdowns fresh while the popup is open
