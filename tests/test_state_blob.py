@@ -112,6 +112,7 @@ def test_state_blob_basic_shape(brain):
     assert blob["default_profile"] == "unblock"
     assert "unblock" in blob["profiles"]
     assert blob["unblocked"] == {}
+    assert blob["active_sessions"] == []
     # group expands to members; excluded present
     assert "reddit.com" in blob["domains"]
     assert "twitter.com" in blob["domains"] and "x.com" in blob["domains"]

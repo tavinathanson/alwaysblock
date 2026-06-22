@@ -133,6 +133,22 @@ class AlwaysBlock:
                 # end_time already a number
                 unblocked_until[domain] = float(end_time)
 
+        # Per-session view (target name + expiry) so the extension popup can show
+        # "what's currently unblocked" the same way `alwaysblock status` does,
+        # instead of a noisy list of every expanded member domain.
+        active_session_view = []
+        for session in active_sessions:
+            end_time = session['end_at']
+            try:
+                end_epoch = end_time.timestamp()
+            except AttributeError:
+                end_epoch = float(end_time)
+            active_session_view.append({
+                'name': session.get('target_name') or ', '.join(session['domains']),
+                'end_at': end_epoch,
+            })
+        active_session_view.sort(key=lambda s: s['end_at'])
+
         # Backend-agnostic blocking state. 'domains'/'excluded'/'pause_until'
         # are the original proxy contract and are unchanged; everything else is
         # additive (the proxy ignores unknown keys).
@@ -141,6 +157,7 @@ class AlwaysBlock:
             'domains': sorted(list(expanded_blocked)),
             'excluded': sorted(list(excluded_domains)),
             'unblocked': unblocked_until,
+            'active_sessions': active_session_view,
             'default_profile': self.config_manager.get_default_profile(),
             'profiles': self.config_manager.get_profiles_summary(),
             'expirations': {}  # Legacy field kept for back-compat (proxy ignores it)

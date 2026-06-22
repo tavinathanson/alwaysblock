@@ -5,29 +5,39 @@
   <title>AlwaysBlock</title>
   <style>
     :root { color-scheme: light dark; }
-    body { font-family: -apple-system, system-ui, sans-serif; width: 320px; margin: 0; padding: 1rem 1.1rem 1.2rem; background: #11151c; color: #e6e9ef; }
-    h1 { font-size: 1.05rem; margin: 0 0 .2rem; }
+    body { font-family: -apple-system, system-ui, sans-serif; width: 330px; margin: 0; padding: 1rem 1.1rem 1.2rem; background: #11151c; color: #e6e9ef; }
+    h1 { font-size: 1.05rem; margin: 0 0 .5rem; }
     .row { display: flex; justify-content: space-between; align-items: center; font-size: .88rem; padding: .35rem 0; border-bottom: 1px solid #222b36; }
-    .row:last-of-type { border-bottom: none; }
     .muted { color: #97a3b6; }
     .dot { font-size: .8rem; }
+    h2 { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: #97a3b6; margin: .9rem 0 .3rem; }
+    #unblocks { font-size: .85rem; }
+    #unblocks .item { display: flex; justify-content: space-between; padding: .25rem 0; }
+    #unblocks .name { color: #ff8f6b; }
+    #unblocks .empty { color: #97a3b6; padding: .25rem 0; }
     button { font: inherit; width: 100%; padding: .55rem; margin-top: .5rem; border-radius: 9px; border: 1px solid #2a3340; background: #1b212b; color: #e6e9ef; cursor: pointer; }
     button.primary { background: #3b82f6; border: none; color: #fff; font-weight: 600; }
-    #note { font-size: .78rem; color: #97a3b6; margin-top: .8rem; line-height: 1.35; }
+    button:disabled { opacity: .5; cursor: default; }
+    #status { font-size: .8rem; color: #7ee0a2; min-height: 1.1em; margin-top: .6rem; }
+    #note { font-size: .76rem; color: #97a3b6; margin-top: .7rem; line-height: 1.35; }
   </style>
 </head>
 <body>
   <h1>AlwaysBlock <span class="muted" style="font-weight:400">· Chrome</span></h1>
   <div class="row"><span>Bridge</span><span id="bridge" class="dot">checking…</span></div>
   <div class="row"><span>Blocking</span><span id="blocking" class="dot">—</span></div>
-  <div class="row"><span>Blocked sites</span><span id="count" class="muted">—</span></div>
 
-  <button class="primary" id="blockAll">Block everything now</button>
+  <h2>Currently unblocked</h2>
+  <div id="unblocks"><div class="empty">…</div></div>
+
+  <h2>Actions</h2>
+  <button id="cancel">Cancel all unblocks (re-block now)</button>
   <button id="disable">Disable until midnight</button>
   <button id="resume">Resume blocking</button>
+  <div id="status"></div>
 
-  <p id="note">This is the Chrome backend. It covers Chrome tabs only — Incognito
-  and other browsers are covered by the system proxy backend if you have it on.</p>
+  <p id="note">Chrome backend — covers Chrome tabs only. Safari, Incognito, and
+  other browsers are covered by the system-proxy backend if it's on.</p>
   <script src="options.js"></script>
 </body>
 </html>

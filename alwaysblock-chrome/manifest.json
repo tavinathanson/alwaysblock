@@ -9,7 +9,8 @@
     "storage"
   ],
   "host_permissions": [
-    "http://127.0.0.1:8906/*"
+    "http://127.0.0.1:8906/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "service-worker.js",
