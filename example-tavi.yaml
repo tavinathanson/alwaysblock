@@ -3,6 +3,13 @@
 
 default_profile: unblock
 
+# OPT-IN: quit native apps while their sites are blocked (off by default).
+# Slack looks like it sends messages even when blocked; quitting it makes
+# "blocked" unmistakable. `app` is the exact process name (`pgrep -x Slack`).
+# kill_apps:
+#   - app: Slack
+#     when_blocked: [slack]
+
 # Globally excluded domains (always allowed, even if parent domain is blocked)
 excluded_domains:
   - accounts.google.com   # Allow Google accounts (for GSuite login)

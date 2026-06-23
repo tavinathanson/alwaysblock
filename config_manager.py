@@ -79,6 +79,47 @@ class ConfigManager:
             'extension': bool(backends.get('extension', False)),
         }
 
+    def get_kill_apps(self) -> List[Dict[str, Any]]:
+        """Return the opt-in list of native apps to quit while their sites are blocked.
+
+        This is OFF by default: with no `kill_apps:` block in config.yaml the list
+        is empty and nothing is ever killed. It's a per-machine opt-in, like
+        `backends:` — the proxy still blocks the app's traffic regardless; this
+        just closes the app so a blocked Slack/Discord/etc. gives a clear signal
+        instead of silently failing to send.
+
+        Config shape:
+
+            kill_apps:
+              - app: Slack            # exact process name (see `pgrep -x Slack`)
+                when_blocked: [slack]  # config domain/group name(s)
+
+        Returns a normalized list of {'app': str, 'domains': [str, ...]} where
+        `domains` are the resolved concrete domains for the entry's targets.
+        Invalid/empty entries are skipped.
+        """
+        raw = self._config_data.get('kill_apps', [])
+        if not isinstance(raw, list):
+            return []
+
+        result = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            app = str(entry.get('app', '')).strip()
+            if not app:
+                continue
+            targets = entry.get('when_blocked', [])
+            if isinstance(targets, str):
+                targets = [targets]
+            if not isinstance(targets, list):
+                continue
+            domains, _invalid = self.resolve_domains([str(t) for t in targets])
+            if not domains:
+                continue
+            result.append({'app': app, 'domains': domains})
+        return result
+
     def resolve_domains(self, targets: List[str]) -> tuple[List[str], List[str]]:
         """Resolve domain names/groups to actual domains
 

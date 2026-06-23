@@ -57,6 +57,11 @@ class AlwaysBlock:
         self.bridge_host = '127.0.0.1'
         self.bridge_port = 8906
 
+        # Opt-in app watchdog (quits native apps while their sites are blocked).
+        # Like the bridge, it runs as the user (no sudo). Off unless config has
+        # a `kill_apps:` block.
+        self.watchdog_pid_file = Path('/tmp/alwaysblock_watchdog.pid')
+
         # Initialize components
         self.db = Database(self.db_path)
         self.config_manager = ConfigManager(str(self.config_path), db=self.db)
@@ -295,6 +300,13 @@ class AlwaysBlock:
         if backends['extension']:
             print(f"Ext. bridge:  {'🟢 Running' if bridge_running else '🔴 Stopped'} ({self.bridge_host}:{self.bridge_port})")
 
+        # Opt-in app watchdog (only shown when configured)
+        kill_apps = self.config_manager.get_kill_apps()
+        watchdog_running = self.is_watchdog_running() if kill_apps else False
+        if kill_apps:
+            apps_label = ', '.join(e['app'] for e in kill_apps)
+            print(f"App watchdog: {'🟢 Running' if watchdog_running else '🔴 Stopped'} (quits: {apps_label})")
+
         # Check auto-start status
         autostart_enabled = Path("/Library/LaunchDaemons/com.alwaysblock.daemon.plist").exists()
         print(f"Auto-start:   {'🟢 Enabled' if autostart_enabled else '🔴 Disabled'}")
@@ -306,6 +318,8 @@ class AlwaysBlock:
             print("⚠️  System proxy not enabled. Enable with: alwaysblock start")
         if backends['extension'] and not bridge_running:
             print("⚠️  Extension bridge not running. Start it with: alwaysblock bridge start")
+        if kill_apps and not watchdog_running:
+            print("⚠️  App watchdog not running. Start it with: alwaysblock watchdog start")
         print(f"")
 
         if active_sessions:
@@ -474,6 +488,117 @@ class AlwaysBlock:
                   f"({self.bridge_host}:{self.bridge_port})")
             if not running:
                 print("   Start it with: alwaysblock bridge start")
+
+    # ------------------------------------------------------------------
+    # App watchdog (opt-in)
+    #
+    # Quits native apps (e.g. Slack) while their sites are blocked, so a blocked
+    # app gives a clear signal instead of silently failing. Off by default;
+    # active only when config.yaml has a `kill_apps:` block. Runs as the user
+    # (no sudo), normally under a per-user LaunchAgent, mirroring the bridge.
+    # ------------------------------------------------------------------
+    def is_watchdog_running(self):
+        """Check whether a watchdog process is running (manual or LaunchAgent).
+
+        Matches both shapes the loop can run as: the LaunchAgent/manual CLI
+        (`.../alwaysblock.py watchdog run`) and a directly-launched script
+        (`python .../watchdog.py`). Deliberately does NOT match a `watchdog
+        status`/`start` invocation, so this check never sees itself.
+        """
+        try:
+            return subprocess.run(
+                ['pgrep', '-f', r'alwaysblock.*watchdog run|watchdog\.py'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ).returncode == 0
+        except Exception:
+            return False
+
+    def run_watchdog(self):
+        """Run the watchdog loop in the foreground (used by the LaunchAgent)."""
+        from watchdog import serve
+        serve()
+
+    def start_watchdog(self):
+        """Start the watchdog as a background daemon (manual use)."""
+        if not self.config_manager.get_kill_apps():
+            print("No apps configured to watch. Add a 'kill_apps:' block to "
+                  f"{self.config_path} first (see README).")
+            return
+        if self.is_watchdog_running():
+            print("Watchdog is already running")
+            return
+
+        watchdog_script = Path(__file__).parent / 'watchdog.py'
+        log_file = Path('/tmp/alwaysblock_watchdog.log')
+        log_file.touch(exist_ok=True)
+        try:
+            os.chmod(log_file, 0o666)
+        except PermissionError:
+            pass
+
+        with open(log_file, 'a') as log:
+            process = subprocess.Popen(
+                [sys.executable, str(watchdog_script)],
+                stdout=log,
+                stderr=log,
+                start_new_session=True
+            )
+
+        with open(self.watchdog_pid_file, 'w') as f:
+            f.write(str(process.pid))
+        try:
+            os.chmod(self.watchdog_pid_file, 0o666)
+        except PermissionError:
+            pass
+
+        print(f"✅ Watchdog started (PID: {process.pid})")
+        print(f"   Logs: {log_file}")
+
+    def stop_watchdog(self):
+        """Stop the background watchdog daemon."""
+        if not self.watchdog_pid_file.exists():
+            if self.is_watchdog_running():
+                print("Watchdog is running but not under our PID file "
+                      "(likely the LaunchAgent). Stop it with: "
+                      "launchctl unload ~/Library/LaunchAgents/com.alwaysblock.watchdog.plist")
+            else:
+                print("Watchdog is not running")
+            return
+        try:
+            with open(self.watchdog_pid_file, 'r') as f:
+                pid = int(f.read().strip())
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            self.watchdog_pid_file.unlink(missing_ok=True)
+            print("✅ Watchdog stopped")
+        except (ValueError, OSError):
+            self.watchdog_pid_file.unlink(missing_ok=True)
+            print("Watchdog was not running")
+
+    def watchdog(self, action='status'):
+        """Control the app watchdog: run (foreground) | start | stop | status."""
+        if action == 'run':
+            self.run_watchdog()
+        elif action == 'start':
+            self.start_watchdog()
+        elif action == 'stop':
+            self.stop_watchdog()
+        else:  # status
+            apps = self.config_manager.get_kill_apps()
+            if not apps:
+                print("App watchdog: not configured (no 'kill_apps:' in config)")
+                return
+            running = self.is_watchdog_running()
+            print(f"App watchdog: {'🟢 Running' if running else '🔴 Stopped'}")
+            for entry in apps:
+                blocked = any(self.config_manager.is_domain_blocked(d) for d in entry['domains'])
+                if self._get_pause_until() > time.time():
+                    blocked = False
+                print(f"  {entry['app']}: {'🔴 blocked (will be quit)' if blocked else '🟢 allowed'}")
+            if not running:
+                print("   Start it with: alwaysblock watchdog start")
 
     def start_proxy(self):
         """Start the transparent proxy daemon"""
@@ -1070,6 +1195,17 @@ class AlwaysBlock:
                 print("Error: Cannot remove LaunchDaemon (requires sudo)")
                 sys.exit(1)
 
+        # Unload and remove per-user LaunchAgents (bridge + opt-in watchdog).
+        # These run as the user, so no sudo is needed to tear them down.
+        agents_dir = Path.home() / "Library" / "LaunchAgents"
+        for agent_name in ("com.alwaysblock.bridge.plist", "com.alwaysblock.watchdog.plist"):
+            agent_plist = agents_dir / agent_name
+            if agent_plist.exists():
+                print(f"Removing LaunchAgent {agent_name}...")
+                subprocess.run(['launchctl', 'unload', str(agent_plist)],
+                               check=False, stderr=subprocess.DEVNULL)
+                agent_plist.unlink(missing_ok=True)
+
         # Remove daemon script
         daemon_script = Path("/usr/local/bin/alwaysblock-daemon")
         if daemon_script.exists():
@@ -1396,6 +1532,12 @@ def main():
                                choices=['run', 'start', 'stop', 'status'],
                                help='run (foreground, for LaunchAgent) | start | stop | status')
 
+    # App watchdog command (opt-in; quits native apps while their sites are blocked)
+    watchdog_parser = subparsers.add_parser('watchdog', help='Control the opt-in app watchdog (no sudo)')
+    watchdog_parser.add_argument('action', nargs='?', default='status',
+                                 choices=['run', 'start', 'stop', 'status'],
+                                 help='run (foreground, for LaunchAgent) | start | stop | status')
+
     # Unblock command
     unblock_parser = subparsers.add_parser('unblock', help='Temporarily unblock domains')
     unblock_parser.add_argument('targets', nargs='*', help='Domains, tags, or groups to unblock (default: all)')
@@ -1461,6 +1603,8 @@ def main():
         ab.restart()
     elif args.command == 'bridge':
         ab.bridge(args.action)
+    elif args.command == 'watchdog':
+        ab.watchdog(args.action)
     elif args.command == 'block-all' or args.command == 'reset':
         ab.block_all()
     elif args.command == 'pause':

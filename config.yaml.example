@@ -22,6 +22,18 @@ default_profile: unblock
 #   proxy: true
 #   extension: true
 
+# OPT-IN: quit native apps while their sites are blocked. Off by default.
+# Apps like Slack hide a blocked connection — a message looks sent but silently
+# isn't. With this, the app is quit whenever its sites are blocked, so "blocked"
+# is unmistakable; unblock the site and you can reopen the app normally. The
+# proxy still does the actual blocking — this just closes the app. Runs as a
+# per-user LaunchAgent (no sudo). `app` is the exact process name (`pgrep -x`),
+# `when_blocked` lists config domain/group name(s).
+#
+# kill_apps:
+#   - app: Slack
+#     when_blocked: [slack.com]
+
 # Globally excluded domains (always allowed, even if parent domain is blocked)
 excluded_domains:
   - accounts.google.com   # Allow Google accounts (for GSuite login)

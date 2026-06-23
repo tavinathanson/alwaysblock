@@ -300,6 +300,22 @@ if [ "$EXT_ENABLED" = "yes" ]; then
     echo "   bypasses 127.0.0.1 so the extension can reach the bridge."
 fi
 
+# Set up the opt-in app watchdog if this machine listed any apps under
+# `kill_apps:`. Per-user LaunchAgent (no sudo) that quits those apps while their
+# sites are blocked. Skipped entirely when kill_apps is absent/empty.
+WATCHDOG_ENABLED=$("$VENV_PATH/bin/python3" -c "import yaml; print('yes' if (yaml.safe_load(open('$CONFIG_DIR/config.yaml')) or {}).get('kill_apps') else 'no')" 2>/dev/null || echo no)
+if [ "$WATCHDOG_ENABLED" = "yes" ]; then
+    echo ""
+    echo "Setting up the app watchdog (no sudo needed)..."
+    AGENT_DIR="$HOME/Library/LaunchAgents"
+    WATCHDOG_PLIST="$AGENT_DIR/com.alwaysblock.watchdog.plist"
+    mkdir -p "$AGENT_DIR"
+    cp "$SCRIPT_DIR/com.alwaysblock.watchdog.plist" "$WATCHDOG_PLIST"
+    launchctl unload "$WATCHDOG_PLIST" 2>/dev/null || true
+    launchctl load "$WATCHDOG_PLIST" 2>/dev/null || true
+    echo "✅ Watchdog LaunchAgent installed (quits configured apps while blocked)"
+fi
+
 echo ""
 echo "✅ Installation complete!"
 echo ""

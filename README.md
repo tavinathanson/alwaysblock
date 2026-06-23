@@ -23,6 +23,7 @@ A macOS website blocker that's always running. The friction is always there, so 
   - [Tag System](#tag-system)
   - [Concurrent Penalty](#concurrent-penalty)
   - [Queueing Behavior](#queueing-behavior)
+  - [Quitting native apps when blocked (opt-in)](#quitting-native-apps-when-blocked-opt-in)
 - [Auto-Start Setup](#auto-start-setup)
 - [Troubleshooting](#troubleshooting)
 - [How It Actually Works](#how-it-actually-works)
@@ -487,6 +488,50 @@ alwaysblock bypass             # All domains unblocked for 5 minutes
 ```
 
 This is useful for temporary "everything unblocked" scenarios that shouldn't disrupt existing sessions.
+
+### Quitting native apps when blocked (opt-in)
+
+Some native apps hide a blocked connection instead of surfacing it. Slack is the
+classic case: while `slack.com` is blocked by the proxy, you can type a message,
+hit send, and it *looks* sent — but it silently never goes through. There's no
+clear "you're blocked" signal.
+
+The **app watchdog** fixes this. It's an opt-in helper that **quits an app
+whenever its sites are blocked**, so "blocked" is unmistakable — the app just
+won't stay open. When you `alwaysblock unblock slack`, it stops quitting and you
+can reopen the app normally. (The proxy still does the actual blocking; the
+watchdog only closes the app.)
+
+It's **off by default**. Turn it on by adding a `kill_apps:` block to your
+config:
+
+```yaml
+# ~/.config/alwaysblock/config.yaml
+kill_apps:
+  - app: Slack             # exact process name — check with: pgrep -x Slack
+    when_blocked: [slack]   # config domain or group name(s)
+```
+
+Then install the watchdog LaunchAgent (or just re-run `install.sh`, which picks
+this up automatically):
+
+```bash
+cp com.alwaysblock.watchdog.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.alwaysblock.watchdog.plist
+```
+
+- Runs as **you** — no sudo, no system changes (like the Chrome bridge).
+- Polls ~1s and sends `SIGTERM`, so an app you open while blocked is closed
+  almost as fast as it opens — far quicker than the old "AppleScript that kills
+  Slack," which noticed late and let the app run for several seconds first.
+- Honors pauses and `disable` (during a travel-disable, nothing is quit).
+- Check it anytime: `alwaysblock watchdog status` shows whether each configured
+  app is currently blocked, and `alwaysblock status` lists it alongside the
+  backends. Drive it by hand with `alwaysblock watchdog {start,stop}`.
+
+> **Note:** `app` is the exact process name macOS uses (what `pgrep -x` matches),
+> which is usually the name in Activity Monitor. The watchdog complements the
+> **proxy** backend; it doesn't depend on the Chrome extension.
 
 ---
 

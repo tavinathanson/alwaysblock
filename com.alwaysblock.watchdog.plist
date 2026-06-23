@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- LaunchAgent for the OPT-IN AlwaysBlock app watchdog.                    -->
+    <!-- Runs as YOU (per-user, no root). It only reads the brain's state and    -->
+    <!-- quits the native apps you listed under `kill_apps:` in config.yaml      -->
+    <!-- while their sites are blocked, so a blocked Slack/etc. is unmistakable  -->
+    <!-- instead of silently failing. Installed only when kill_apps is set.      -->
+
+    <key>Label</key>
+    <string>com.alwaysblock.watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/alwaysblock</string>
+        <string>watchdog</string>
+        <string>run</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/alwaysblock_watchdog.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/alwaysblock_watchdog.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>
