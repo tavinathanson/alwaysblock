@@ -509,8 +509,12 @@ config:
 # ~/.config/alwaysblock/config.yaml
 kill_apps:
   - app: Slack             # exact process name — check with: pgrep -x Slack
-    when_blocked: [slack]   # config domain or group name(s)
+    when_blocked: [slack]   # domain/group name(s) you configured under `domains:`
 ```
+
+`when_blocked` must name a domain or group that exists in your `domains:` block
+(above, the `slack` group). A name that isn't configured is silently ignored, so
+the app would never be quit.
 
 Then install the watchdog LaunchAgent (or just re-run `install.sh`, which picks
 this up automatically):
