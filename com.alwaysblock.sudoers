@@ -2,7 +2,7 @@
 # This file should be installed to /etc/sudoers.d/alwaysblock
 #
 # Allows the current user to run specific alwaysblock commands without password:
-# - start, stop, restart
+# - start, stop, restart, travel
 # - enable-autostart, disable-autostart
 # - uninstall
 #
@@ -12,6 +12,7 @@
 USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock start
 USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock stop
 USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock restart
+USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock travel
 USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock enable-autostart
 USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock disable-autostart
 USERNAME ALL=(ALL) NOPASSWD: /usr/local/bin/alwaysblock uninstall

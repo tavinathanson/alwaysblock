@@ -158,7 +158,7 @@ status and applies it via `declarativeNetRequest`. You manage everything from th
 
 - `alwaysblock unblock <site>` requests access — the block page shows the exact
   command, then flips to a countdown and returns you to the site when it opens.
-- `alwaysblock disable` / `resume` / `block-all` also take effect in Chrome.
+- `alwaysblock disable` / `travel` / `resume` / `block-all` also take effect in Chrome.
 
 The extension's toolbar popup is a read-only mirror of `alwaysblock status` (what
 is blocked, plus any active / pending / queued unblocks). Timing, queueing,
@@ -631,6 +631,15 @@ You should see the list of bypass domains. If you installed AlwaysBlock before t
 ```bash
 alwaysblock restart
 ```
+
+If a stubborn network (airplane wifi is a common offender) still won't cooperate even with the bypass rules, use travel mode:
+
+```bash
+alwaysblock travel    # everything off for an hour; run again to add another hour
+alwaysblock resume    # turn everything back on early
+```
+
+This pauses blocking *and* turns off the macOS system proxy — but unlike `alwaysblock stop`, it leaves the bridge running, so the Chrome extension knows blocking is off instead of enforcing its last cached blocklist. When the hour expires, the autostart daemon restores the system proxy within a minute on its own; nothing stays off by accident.
 
 ### Proxy not blocking
 

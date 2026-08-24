@@ -42,6 +42,15 @@ log "AlwaysBlock daemon started successfully"
 while true; do
     sleep 60
 
+    # While blocking is paused (travel / disable-until-midnight), leave
+    # enforcement alone: re-enabling the system proxy here would fight
+    # 'alwaysblock travel' on captive-portal wifi. Once the pause expires this
+    # check stops matching, so the loop below restores everything within a
+    # minute — that's what makes travel self-healing.
+    if /usr/local/bin/alwaysblock paused >/dev/null 2>&1; then
+        continue
+    fi
+
     # Health check: ensure proxy is still running
     if ! lsof -i :8905 >/dev/null 2>&1; then
         log "Proxy daemon stopped, restarting..."

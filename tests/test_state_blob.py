@@ -114,3 +114,75 @@ def test_state_blob_reflects_disable(brain):
     brain.disable()  # disable until midnight -> sets pause_until
     blob = brain._write_state()
     assert blob.get("pause_until", 0) > 0
+
+
+# --- travel mode ----------------------------------------------------------
+class StubSystemProxy:
+    """Stands in for SystemProxy so tests never touch networksetup."""
+
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+        self.calls = []
+
+    def get_status(self):
+        return {"enabled": self.enabled, "services_count": 1, "enabled_count": int(self.enabled)}
+
+    def enable_proxy(self):
+        self.calls.append("enable")
+        self.enabled = True
+
+    def disable_proxy(self):
+        self.calls.append("disable")
+        self.enabled = False
+
+
+@pytest.fixture
+def travel_brain(brain, monkeypatch):
+    brain.system_proxy = StubSystemProxy(enabled=True)
+    monkeypatch.setattr(brain, "is_proxy_running", lambda: True)
+    monkeypatch.setattr(brain, "is_bridge_running", lambda: True)
+    return brain
+
+
+def test_travel_pauses_for_an_hour_and_disables_system_proxy(travel_brain):
+    import time
+    travel_brain.travel()
+    pause_until = travel_brain._get_pause_until()
+    assert 3590 < pause_until - time.time() <= 3600
+    assert travel_brain.system_proxy.calls == ["disable"]
+    # The pause is in the state blob, so the extension (via the bridge) sees it.
+    assert travel_brain._write_state().get("pause_until") == pause_until
+
+
+def test_travel_repeats_add_an_hour_each(travel_brain):
+    import time
+    travel_brain.travel()
+    travel_brain.travel()
+    assert 7190 < travel_brain._get_pause_until() - time.time() <= 7200
+    # System proxy already off on the second run -> only one disable call.
+    assert travel_brain.system_proxy.calls == ["disable"]
+
+
+def test_resume_after_travel_restores_system_proxy(travel_brain):
+    travel_brain.travel()
+    travel_brain.resume()
+    assert travel_brain._get_pause_until() == 0.0
+    assert travel_brain.system_proxy.calls == ["disable", "enable"]
+
+
+def test_resume_after_travel_without_proxy_daemon_does_not_enable(travel_brain, monkeypatch):
+    # Pointing the system proxy at a dead daemon would black-hole traffic.
+    monkeypatch.setattr(travel_brain, "is_proxy_running", lambda: False)
+    travel_brain.travel()
+    travel_brain.resume()
+    assert travel_brain.system_proxy.calls == ["disable"]
+
+
+def test_paused_exit_codes(travel_brain):
+    with pytest.raises(SystemExit) as e:
+        travel_brain.paused()
+    assert e.value.code == 1
+    travel_brain.travel()
+    with pytest.raises(SystemExit) as e:
+        travel_brain.paused()
+    assert e.value.code == 0

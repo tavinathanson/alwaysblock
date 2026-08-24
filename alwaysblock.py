@@ -1030,11 +1030,61 @@ class AlwaysBlock:
         print(f"   That's {format_time_remaining((midnight - now).total_seconds())} from now")
         print("   Run 'alwaysblock resume' to re-enable blocking now")
 
+    def travel(self):
+        """Turn the whole system off for an hour at a time (blocking AND the
+        macOS system proxy).
+
+        For airplane/hotel wifi, where even a pass-through proxy breaks captive
+        portals. Unlike 'stop', the bridge stays up (it's loopback-only and
+        can't interfere with wifi) so the Chrome extension learns blocking is
+        off instead of fail-closed enforcing its cached blocklist. Each run
+        adds another hour. Recovery is automatic: the autostart daemon skips
+        its enforcement checks while paused and restores the system proxy
+        within a minute of the pause expiring; 'alwaysblock resume' does both
+        immediately.
+        """
+        now = time.time()
+        new_end = max(self._get_pause_until(), now) + 3600
+        self._set_pause_until(new_end)
+
+        backends = self.config_manager.get_backends()
+        if backends['proxy'] and self.system_proxy.get_status()['enabled']:
+            # The proxy daemon keeps running (it passes everything through
+            # while paused); only the macOS proxy setting has to go, since
+            # that's what upsets captive portals.
+            self.disable_system_proxy()
+        if backends['extension'] and not self.is_bridge_running():
+            self.start_bridge()
+
+        until = datetime.fromtimestamp(new_end)
+        remaining = format_time_remaining(new_end - now)
+        print(f"✈️  Travel mode: everything off until {until.strftime('%-I:%M %p')} ({remaining})")
+        print("   Run 'alwaysblock travel' again to add another hour")
+        print("   Run 'alwaysblock resume' to turn everything back on early")
+
+    def paused(self):
+        """Plumbing for the autostart daemon: exit 0 iff a pause is active,
+        so its health checks don't re-enable the system proxy mid-travel."""
+        if self._get_pause_until() > time.time():
+            print("paused")
+            sys.exit(0)
+        print("not paused")
+        sys.exit(1)
+
     def resume(self):
-        """Resume blocking after a manual pause or all-day disable"""
+        """Resume blocking after a manual pause, all-day disable, or travel"""
         self.db.delete_setting('pause_until')
         self._write_state()
         print("✅ Blocking resumed")
+        # Travel mode turns the macOS system proxy off; restore it, but only
+        # with the proxy daemon up — pointing the system at a dead proxy would
+        # black-hole all traffic, not resume blocking.
+        backends = self.config_manager.get_backends()
+        if backends['proxy'] and not self.system_proxy.get_status()['enabled']:
+            if self.is_proxy_running():
+                self.enable_system_proxy()
+            else:
+                print("⚠️  Proxy daemon not running. Start it with: alwaysblock start")
 
     def block_all(self):
         """Block all domains immediately"""
@@ -1550,7 +1600,9 @@ def main():
     # Pause/resume (manual fallback for captive portal)
     subparsers.add_parser('pause', help='Manually pause blocking for 2 min (for captive portal issues)')
     subparsers.add_parser('disable', help='Disable blocking until midnight (for travel/hotspots; survives reboot)')
-    subparsers.add_parser('resume', help='Resume blocking after a pause or disable')
+    subparsers.add_parser('travel', help='Turn everything off (blocking + system proxy) for an hour; repeat to extend')
+    subparsers.add_parser('resume', help='Resume blocking after a pause, disable, or travel')
+    subparsers.add_parser('paused', help='Exit 0 if blocking is paused (plumbing for the autostart daemon)')
 
     # Cancel command
     cancel_parser = subparsers.add_parser('cancel', help='Cancel an unblock session')
@@ -1585,7 +1637,9 @@ def main():
         'uninstall'
     }
     if proxy_backend_enabled:
-        sudo_commands |= {'start', 'stop', 'restart'}
+        # travel flips the macOS system proxy off via networksetup, so it
+        # needs root just like stop does.
+        sudo_commands |= {'start', 'stop', 'restart', 'travel'}
 
     # Re-exec with sudo if needed
     if args.command in sudo_commands:
@@ -1611,6 +1665,10 @@ def main():
         ab.pause()
     elif args.command == 'disable':
         ab.disable()
+    elif args.command == 'travel':
+        ab.travel()
+    elif args.command == 'paused':
+        ab.paused()
     elif args.command == 'resume':
         ab.resume()
     elif args.command == 'unblock':
