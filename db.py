@@ -43,12 +43,9 @@ class Database:
                 )
             """)
             
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS cooldowns (
-                    profile TEXT PRIMARY KEY,
-                    last_used TIMESTAMP NOT NULL
-                )
-            """)
+            # Cooldowns are derived from sessions.end_at (see cooldown_remaining);
+            # the old request-time table is gone.
+            conn.execute("DROP TABLE IF EXISTS cooldowns")
 
             # Durable key/value store for persistent state (e.g. pause_until).
             # Lives in the db (not /tmp) so an all-day disable survives reboots.
@@ -386,12 +383,15 @@ class Database:
     def cancel_session(self, session_id: int) -> bool:
         """Cancel a session"""
         with self._get_conn() as conn:
+            # An active session ends now (so its cooldown starts now); a session
+            # that never started leaves no end_at and therefore no cooldown.
             result = conn.execute("""
                 UPDATE sessions
-                SET status = 'completed'
+                SET status = 'completed',
+                    end_at = CASE WHEN status = 'active' THEN ? ELSE NULL END
                 WHERE id = ?
                 AND status IN ('waiting_for_domain', 'pending', 'active')
-            """, (session_id,))
+            """, (self._datetime_to_str(datetime.now()), session_id))
             conn.commit()
 
             if result.rowcount > 0:
@@ -416,41 +416,34 @@ class Database:
 
             return row['count'] if row else 0
     
-    def check_cooldown(self, profile: str, cooldown_minutes: int) -> bool:
-        """Check if profile is on cooldown"""
-        if cooldown_minutes <= 0:
-            return True  # No cooldown configured
+    def cooldown_remaining(self, cooldown_minutes: float, *, profile: str = None,
+                           target_name: str = None) -> Optional[timedelta]:
+        """How much cooldown is left for a profile or a target, or None if clear.
 
-        now = datetime.now()
-        cooldown_until = now - timedelta(minutes=cooldown_minutes)
+        A cooldown counts from the END of the most recent session matching the
+        given key (profile name or target name), including sessions that are
+        still pending or active. So "cooldown: 15" means "15 minutes blocked
+        after the last session closes", regardless of how long it ran.
+        """
+        if cooldown_minutes <= 0 or not (profile or target_name):
+            return None
 
+        column, key = ('profile', profile) if profile else ('target_name', target_name)
         with self._get_conn() as conn:
-            row = conn.execute("""
-                SELECT last_used FROM cooldowns
-                WHERE profile = ?
-                AND last_used > ?
-            """, (profile, self._datetime_to_str(cooldown_until))).fetchone()
+            row = conn.execute(f"""
+                SELECT MAX(end_at) AS last_end FROM sessions
+                WHERE {column} = ? AND end_at IS NOT NULL
+            """, (key,)).fetchone()
 
-            if row:
-                # Still on cooldown
-                last_used = self._str_to_datetime(row['last_used'])
-                remaining = (last_used + timedelta(minutes=cooldown_minutes)) - now
-                logger.info(f"Profile '{profile}' on cooldown for {remaining.total_seconds():.0f} seconds")
-                return False
+        if not row or not row['last_end']:
+            return None
 
-            return True
-    
-    def update_cooldown(self, profile: str):
-        """Update last used time for cooldown tracking"""
-        now = datetime.now()
+        remaining = self._str_to_datetime(row['last_end']) + timedelta(minutes=cooldown_minutes) - datetime.now()
+        if remaining.total_seconds() <= 0:
+            return None
+        logger.info(f"{column} '{key}' on cooldown for {remaining.total_seconds():.0f} seconds")
+        return remaining
 
-        with self._get_conn() as conn:
-            conn.execute("""
-                INSERT OR REPLACE INTO cooldowns (profile, last_used)
-                VALUES (?, ?)
-            """, (profile, self._datetime_to_str(now)))
-            conn.commit()
-    
     def get_all_domains_from_sessions(self) -> List[str]:
         """Get all unique domains from active sessions"""
         domains = set()

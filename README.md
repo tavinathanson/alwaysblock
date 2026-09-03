@@ -258,6 +258,7 @@ domains:
 
   instagram.com:
     tags: [social, distracting]
+    cooldown: 15           # 15 min blocked after each session ends (any profile)
 
   twitter.com:
     tags: [social, distracting]
@@ -379,7 +380,7 @@ Profiles define unblocking behavior:
 
 - **wait**: How long to wait before accessing (minutes)
 - **duration**: How long to stay unblocked (minutes)
-- **cooldown**: Minimum time between uses (minutes)
+- **cooldown**: Minutes the profile stays locked after its last session ends (see [Cooldowns](#cooldowns))
 - **tag_rules**: Override wait times for specific tags
 - **target_type**: Controls which targets the profile accepts:
   - `all`: Must be called without targets (applies to all domains). Runs independently by default.
@@ -411,6 +412,27 @@ peek:
   duration: 1
   target_type: single   # Exactly one target required
 ```
+
+### Cooldowns
+
+A cooldown is a lock that starts when a session **ends** (expires or is
+cancelled) and lasts the configured number of minutes. While it's running,
+`unblock` refuses with the time remaining. Cooldowns are computed from session
+history, so they survive restarts and don't care how long the session ran.
+
+There are two places to set one:
+
+- **On a profile** (`profiles.<name>.cooldown`): locks that profile for
+  everyone. `bypass` with `cooldown: 60` means one bypass, then an hour after it
+  closes before the next.
+- **On a domain or group** (`domains.<name>.cooldown`): locks that target no
+  matter which profile opened it. `instagram.com` with `cooldown: 15` means
+  fifteen minutes of block after every Instagram session, whether it came from
+  `unblock`, `peek`, or `quick`.
+
+Both are checked before any session is created, and a pending or active
+session counts as "not ended yet", so you can't queue a second session on a
+cooled-down target.
 
 ### Tag System
 
@@ -862,7 +884,7 @@ reddit:
 - `waiting_for_domain`: queued because that domain is already active
 - `completed`: expired or cancelled
 
-**Database**: Uses SQLite to track sessions and cooldowns.
+**Database**: Uses SQLite to track sessions; cooldowns are derived from each session's end time.
 
 ---
 

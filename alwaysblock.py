@@ -894,7 +894,9 @@ class AlwaysBlock:
             for target in targets:
                 resolved, invalid = self.config_manager.resolve_domains([target])
                 if resolved:
-                    all_resolved.append((target, resolved))
+                    # Store the config key ('instagram.com', not 'instagram') so
+                    # tags and per-target cooldowns match regardless of spelling
+                    all_resolved.append((self.config_manager.canonical_target(target), resolved))
                 if invalid:
                     all_invalid.extend(invalid)
 
@@ -911,15 +913,19 @@ class AlwaysBlock:
             print("Error: No valid domains to unblock")
             sys.exit(1)
 
-        # Check cooldown once at the start
-        # Use the first target for timing calculation (they should all use same profile anyway)
-        timing = self.config_manager.calculate_timing(profile_name, [targets[0]])
-        if not self.db.check_cooldown(profile_name, timing['cooldown']):
-            print(f"Error: Profile '{profile_name}' is on cooldown")
-            sys.exit(1)
-
-        # Update cooldown once
-        self.db.update_cooldown(profile_name)
+        # Refuse if the profile or any target is still cooling down. Cooldowns
+        # count from the end of the last matching session (db.cooldown_remaining),
+        # so nothing is created until every check passes.
+        profile_cooldown = self.config_manager.profiles.get(profile_name, {}).get('cooldown', 0)
+        checks = [(f"Profile '{profile_name}'", dict(profile=profile_name), profile_cooldown)]
+        for target, _ in all_resolved:
+            checks.append((f"Target '{target}'", dict(target_name=target),
+                           self.config_manager.get_target_cooldown(target)))
+        for label, key, minutes in checks:
+            remaining = self.db.cooldown_remaining(minutes, **key)
+            if remaining:
+                print(f"Error: {label} is on cooldown for another {format_time_remaining(remaining.total_seconds())}")
+                sys.exit(1)
 
         # Create separate sessions for each target
         # Each session is independent and only queues if the same domain is already active/pending

@@ -120,6 +120,22 @@ class ConfigManager:
             result.append({'app': app, 'domains': domains})
         return result
 
+    COMMON_TLDS = ['.com', '.org', '.net', '.io', '.dev']
+
+    def canonical_target(self, target: str) -> Optional[str]:
+        """Map user input ('instagram', 'instagram.com', 'facebook') to its config
+        key, trying the bare name first and then common TLD suffixes. Returns
+        None when nothing in the config matches."""
+        target = target.strip()
+        domain_config = self._config_data.get('domains', {})
+        if target in domain_config:
+            return target
+        if not any(target.endswith(t) for t in self.COMMON_TLDS):
+            for tld in self.COMMON_TLDS:
+                if (target + tld) in domain_config:
+                    return target + tld
+        return None
+
     def resolve_domains(self, targets: List[str]) -> tuple[List[str], List[str]]:
         """Resolve domain names/groups to actual domains
 
@@ -131,51 +147,28 @@ class ConfigManager:
         domain_config = self._config_data.get('domains', {})
 
         for target in targets:
-            target = target.strip()
-            matched = False
-
-            # Direct match
-            if target in domain_config:
-                config = domain_config[target]
-                if isinstance(config, dict) and 'domains' in config:
-                    # Domain group
-                    domains.extend(config['domains'])
-                else:
-                    # Individual domain
-                    domains.append(target)
-                matched = True
+            name = self.canonical_target(target)
+            if name is None:
+                invalid.append(target.strip())
                 continue
-
-            # Try with .com suffix
-            if not target.endswith('.com') and (target + '.com') in domain_config:
-                target_com = target + '.com'
-                config = domain_config[target_com]
-                if isinstance(config, dict) and 'domains' in config:
-                    domains.extend(config['domains'])
-                else:
-                    domains.append(target_com)
-                matched = True
-                continue
-
-            # Try other common TLDs
-            common_tlds = ['.org', '.net', '.io', '.dev']
-            for tld in common_tlds:
-                if not any(target.endswith(t) for t in common_tlds + ['.com']) and (target + tld) in domain_config:
-                    target_with_tld = target + tld
-                    config = domain_config[target_with_tld]
-                    if isinstance(config, dict) and 'domains' in config:
-                        domains.extend(config['domains'])
-                    else:
-                        domains.append(target_with_tld)
-                    matched = True
-                    break
-
-            if not matched:
-                # Not found in config
-                invalid.append(target)
+            config = domain_config[name]
+            if isinstance(config, dict) and 'domains' in config:
+                domains.extend(config['domains'])  # Domain group
+            else:
+                domains.append(name)               # Individual domain
 
         return (list(set(domains)), invalid)
-    
+
+    def get_target_cooldown(self, target: str) -> float:
+        """Per-target cooldown (minutes) from the domain entry's `cooldown:` key.
+
+        Counts from the end of the target's last session, whatever profile ran
+        it. 0 when the target has no cooldown configured."""
+        config = self._config_data.get('domains', {}).get(target)
+        if isinstance(config, dict):
+            return config.get('cooldown', 0) or 0
+        return 0
+
     def resolve_host_to_target(self, host: str) -> Optional[str]:
         """Map a concrete browser host to the config target that unblocks it.
 
