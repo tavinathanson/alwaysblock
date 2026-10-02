@@ -16,7 +16,7 @@ import shutil
 
 # Import the existing modules we'll reuse
 from config_manager import ConfigManager
-from db import Database
+from db import Database, local_midnight
 from system_proxy import SystemProxy
 
 
@@ -321,6 +321,14 @@ class AlwaysBlock:
         if kill_apps and not watchdog_running:
             print("⚠️  App watchdog not running. Start it with: alwaysblock watchdog start")
         print(f"")
+
+        budgeted = self.config_manager.budgeted_targets()
+        if budgeted:
+            print(f"Daily budgets (reset at midnight):")
+            for target in budgeted:
+                limit = self.config_manager.target_setting(target, 'daily_limit')
+                print(f"  {target}: {self._budget_left(target):g} of {limit:g} min left")
+            print(f"")
 
         if active_sessions:
             print(f"Active unblock sessions ({len(active_sessions)}):")
@@ -920,12 +928,27 @@ class AlwaysBlock:
         checks = [(f"Profile '{profile_name}'", dict(profile=profile_name), profile_cooldown)]
         for target, _ in all_resolved:
             checks.append((f"Target '{target}'", dict(target_name=target),
-                           self.config_manager.get_target_cooldown(target)))
+                           self.config_manager.target_setting(target, 'cooldown')))
         for label, key, minutes in checks:
             remaining = self.db.cooldown_remaining(minutes, **key)
             if remaining:
                 print(f"Error: {label} is on cooldown for another {format_time_remaining(remaining.total_seconds())}")
                 sys.exit(1)
+
+        # Daily budgets: a spent target is refused, and an all-domains session
+        # just leaves its domains out. ignore_budget profiles skip this.
+        budget_left = {}
+        if not self.config_manager.profile_ignores_budget(profile_name):
+            if targets == ['__ALL__']:
+                spent = {d for t in self.config_manager.budgeted_targets() if self._budget_left(t) == 0
+                         for d in self.config_manager.resolve_domains([t])[0]}
+                all_resolved = [('all domains', [d for d in all_domains if d not in spent])]
+            for target, _ in all_resolved:
+                left = self._budget_left(target)
+                if left == 0:
+                    print(f"Error: Target '{target}' has used its daily budget; it resets at midnight")
+                    sys.exit(1)
+                budget_left[target] = left
 
         # Create separate sessions for each target
         # Each session is independent and only queues if the same domain is already active/pending
@@ -935,6 +958,10 @@ class AlwaysBlock:
         for target, domains in all_resolved:
             # Calculate timing for this specific target
             timing = self.config_manager.calculate_timing(profile_name, [target])
+            left = budget_left.get(target)
+            if left is not None and left < timing['duration']:
+                timing['duration'] = left
+                print(f"Note: '{target}' has {left:g} min of daily budget left, so the session is shortened")
 
             # For non-independent immediate access profiles (wait=0), cancel overlapping sessions
             # Independent profiles (like bypass/quick) run concurrently without affecting others
@@ -996,6 +1023,17 @@ class AlwaysBlock:
         else:
             print(f"✅ Created 1 session")
 
+    def _budget_left(self, target):
+        """Minutes of a target's daily_limit left today (0 once under a minute
+        remains), or None when it has no limit."""
+        limit = self.config_manager.target_setting(target, 'daily_limit')
+        if not limit:
+            return None
+        exempt = [p for p in self.config_manager.get_profile_names()
+                  if self.config_manager.profile_ignores_budget(p)]
+        left = limit - self.db.budget_used(target, exempt).total_seconds() / 60
+        return round(left, 1) if left >= 1 else 0
+
     def _get_pause_until(self):
         """Return the durable pause-until timestamp (0.0 if unset/unparseable)"""
         raw = self.db.get_setting('pause_until')
@@ -1028,9 +1066,7 @@ class AlwaysBlock:
         midnight. Run 'alwaysblock resume' to re-enable early.
         """
         now = datetime.now()
-        midnight = (now + timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        midnight = local_midnight(1)
         self._set_pause_until(midnight.timestamp())
         print(f"✅ Blocking disabled until midnight ({midnight.strftime('%-I:%M %p')})")
         print(f"   That's {format_time_remaining((midnight - now).total_seconds())} from now")

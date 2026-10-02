@@ -44,6 +44,7 @@ excluded_domains:
 domains:
   facebook.com:
   instagram.com:
+    # daily_limit: 45   # optional: at most 45 min of sessions per day
   twitter.com:
   x.com:
   reddit.com:
@@ -67,3 +68,4 @@ profiles:
     wait: 0
     duration: 5
     cooldown: 60
+    ignore_budget: true   # emergencies skip daily_limit

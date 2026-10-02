@@ -20,6 +20,7 @@ A macOS website blocker that's always running. The friction is always there, so 
   - [Advanced: Component-Level Control](#advanced-component-level-control)
 - [Advanced Features](#advanced-features)
   - [Profiles](#profiles)
+  - [Daily Budgets](#daily-budgets)
   - [Tag System](#tag-system)
   - [Concurrent Penalty](#concurrent-penalty)
   - [Queueing Behavior](#queueing-behavior)
@@ -259,6 +260,7 @@ domains:
   instagram.com:
     tags: [social, distracting]
     cooldown: 15           # 15 min blocked after each session ends (any profile)
+    daily_limit: 45        # at most 45 min of sessions per day (any profile)
 
   twitter.com:
     tags: [social, distracting]
@@ -381,6 +383,7 @@ Profiles define unblocking behavior:
 - **wait**: How long to wait before accessing (minutes)
 - **duration**: How long to stay unblocked (minutes)
 - **cooldown**: Minutes the profile stays locked after its last session ends (see [Cooldowns](#cooldowns))
+- **ignore_budget**: Skip daily budgets (see [Daily Budgets](#daily-budgets)); these sessions don't count toward them either
 - **tag_rules**: Override wait times for specific tags
 - **target_type**: Controls which targets the profile accepts:
   - `all`: Must be called without targets (applies to all domains). Runs independently by default.
@@ -433,6 +436,33 @@ There are two places to set one:
 Both are checked before any session is created, and a pending or active
 session counts as "not ended yet", so you can't queue a second session on a
 cooled-down target.
+
+### Daily Budgets
+
+A domain or group can cap how much session time it gets per day with
+`daily_limit` (minutes). The budget resets at local midnight.
+
+```yaml
+domains:
+  instagram.com:
+    daily_limit: 45
+```
+
+Every session for that target draws from the budget, whatever profile opened
+it. A pending or active session counts in full as soon as it's created, so you
+can't queue past the limit. Cancelling a session early refunds the time you
+didn't use: run `alwaysblock cancel instagram` when you're done.
+
+- If the budget has less time left than the profile's duration, the session is
+  shortened to fit.
+- Once less than a minute is left, `unblock` refuses until midnight.
+- All-domains profiles like `quick` leave targets with no budget left out of
+  their session, so they aren't a way around the limit. Their sessions don't
+  count toward any budget.
+- A profile with `ignore_budget: true` (say, `bypass`) skips budgets entirely,
+  and its sessions are free.
+
+`alwaysblock status` shows what's left of each budget today.
 
 ### Tag System
 

@@ -13,6 +13,12 @@ import json
 logger = logging.getLogger(__name__)
 
 
+def local_midnight(days_ahead: int = 0) -> datetime:
+    """Local midnight starting today (0) or a later day (1 = tonight)."""
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return today + timedelta(days=days_ahead)
+
+
 class Database:
     """SQLite database for session and cooldown tracking"""
     
@@ -443,6 +449,32 @@ class Database:
             return None
         logger.info(f"{column} '{key}' on cooldown for {remaining.total_seconds():.0f} seconds")
         return remaining
+
+    def budget_used(self, target_name: str, exempt_profiles: List[str] = ()) -> timedelta:
+        """Session time charged to a target since local midnight.
+
+        Each session counts from start to end, clipped to today. Pending and
+        active sessions count in full because that time is already committed;
+        queued ones count their duration. Cancelling an active session moves
+        its end to now, which refunds the rest. Sessions from exempt profiles
+        are free.
+        """
+        midnight = local_midnight()
+        marks = ','.join('?' * len(exempt_profiles))
+        with self._get_conn() as conn:
+            rows = conn.execute(f"""
+                SELECT * FROM sessions
+                WHERE target_name = ? AND profile NOT IN ({marks})
+                AND (status = 'waiting_for_domain' OR end_at > ?)
+            """, (target_name, *exempt_profiles, self._datetime_to_str(midnight))).fetchall()
+
+        used = timedelta()
+        for s in map(self._row_to_dict, rows):
+            if s['status'] == 'waiting_for_domain':
+                used += timedelta(minutes=s['duration_minutes'])
+            else:
+                used += s['end_at'] - max(s['start_at'], midnight)
+        return used
 
     def get_all_domains_from_sessions(self) -> List[str]:
         """Get all unique domains from active sessions"""

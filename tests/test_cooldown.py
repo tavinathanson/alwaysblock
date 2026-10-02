@@ -108,7 +108,7 @@ def test_resolve_domains_still_expands_groups(cm):
 
 
 def test_target_cooldown_from_config(cm):
-    assert cm.get_target_cooldown('instagram.com') == 15
-    assert cm.get_target_cooldown('facebook') == 15
-    assert cm.get_target_cooldown('reddit.com') == 0
-    assert cm.get_target_cooldown('missing') == 0
+    assert cm.target_setting('instagram.com', 'cooldown') == 15
+    assert cm.target_setting('facebook', 'cooldown') == 15
+    assert cm.target_setting('reddit.com', 'cooldown') == 0
+    assert cm.target_setting('missing', 'cooldown') == 0

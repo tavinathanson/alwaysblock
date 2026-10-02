@@ -159,15 +159,24 @@ class ConfigManager:
 
         return (list(set(domains)), invalid)
 
-    def get_target_cooldown(self, target: str) -> float:
-        """Per-target cooldown (minutes) from the domain entry's `cooldown:` key.
-
-        Counts from the end of the target's last session, whatever profile ran
-        it. 0 when the target has no cooldown configured."""
+    def target_setting(self, target: str, key: str) -> float:
+        """A per-target number from the domain entry, e.g. `cooldown:` (minutes
+        after the target's last session ends, whatever profile ran it) or
+        `daily_limit:` (minutes of sessions per local day). 0 when unset."""
         config = self._config_data.get('domains', {}).get(target)
         if isinstance(config, dict):
-            return config.get('cooldown', 0) or 0
+            return config.get(key, 0) or 0
         return 0
+
+    def budgeted_targets(self) -> List[str]:
+        """Domains and groups that set a `daily_limit:`."""
+        return [name for name in self._config_data.get('domains', {})
+                if self.target_setting(name, 'daily_limit')]
+
+    def profile_ignores_budget(self, profile_name: str) -> bool:
+        """Profiles with `ignore_budget: true` skip daily limits, and their
+        sessions don't count toward them."""
+        return bool(self.profiles.get(profile_name, {}).get('ignore_budget', False))
 
     def resolve_host_to_target(self, host: str) -> Optional[str]:
         """Map a concrete browser host to the config target that unblocks it.
