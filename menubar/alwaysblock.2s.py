@@ -27,8 +27,10 @@ def action(label, *args):
     return f"{label} | bash={CLI} {params} terminal=false refresh=true"
 
 
-def minutes(epoch):
-    return max(0, round((epoch - time.time()) / 60))
+def until(epoch):
+    """Compact time until epoch; seconds under 3 minutes, like format_time_remaining in the CLI."""
+    secs = max(0, int(epoch - time.time()))
+    return f"{secs}s" if secs < 180 else f"{secs // 60}m"
 
 
 status = subprocess.run([CLI, "status"], capture_output=True, text=True).stdout
@@ -48,8 +50,8 @@ print(f" | sfimage={icon}{color}")
 print("---")
 
 actions = (
-    [action(f"Cancel {s['name']} ({minutes(s['end_at'])}m left)", "cancel", s["id"]) for s in active]
-    + [action(f"Cancel {s['name']} (opens in {minutes(s['start_at'])}m)", "cancel", s["id"])
+    [action(f"Cancel {s['name']} ({until(s['end_at'])} left)", "cancel", s["id"]) for s in active]
+    + [action(f"Cancel {s['name']} (opens in {until(s['start_at'])})", "cancel", s["id"])
        for s in pending]
     + [action(f"Cancel {s['name']} (queued)", "cancel", s["id"]) for s in waiting]
     + ([action("Resume blocking", "resume")] if paused else [])
