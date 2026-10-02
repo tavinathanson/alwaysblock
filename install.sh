@@ -316,6 +316,17 @@ if [ "$WATCHDOG_ENABLED" = "yes" ]; then
     echo "✅ Watchdog LaunchAgent installed (quits configured apps while blocked)"
 fi
 
+# Link the menubar plugin if SwiftBar is installed (no sudo). Uses SwiftBar's
+# configured plugin folder, or ~/SwiftBar if it hasn't been set up yet.
+if [ -d "/Applications/SwiftBar.app" ]; then
+    PLUGIN_DIR=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || echo "$HOME/SwiftBar")
+    mkdir -p "$PLUGIN_DIR"
+    # Drop links from older refresh intervals (the rate is in the filename).
+    rm -f "$PLUGIN_DIR"/alwaysblock.*.py
+    ln -s "$SCRIPT_DIR"/menubar/alwaysblock.*.py "$PLUGIN_DIR/"
+    echo "✅ Menubar plugin linked into $PLUGIN_DIR"
+fi
+
 echo ""
 echo "✅ Installation complete!"
 echo ""

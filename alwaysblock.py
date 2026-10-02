@@ -90,9 +90,9 @@ class AlwaysBlock:
           excluded:          [host, ...]   always-allowed hosts (win over blocks)
           unblocked:         {host: end_epoch}  configured hosts temporarily allowed,
                                                 with the epoch seconds they re-block
-          active_sessions:   [{name, domains, end_at}]   currently-open unblocks
-          pending_sessions:  [{name, domains, start_at}]  waiting out a delay
-          waiting_sessions:  [{name, domains}]   queued behind another session
+          active_sessions:   [{id, name, domains, end_at}]   currently-open unblocks
+          pending_sessions:  [{id, name, domains, start_at}]  waiting out a delay
+          waiting_sessions:  [{id, name, domains}]   queued behind another session
           pause_until:       float (optional)  blocking fully off until this epoch
                                                 (manual 2-min pause or all-day disable)
           schema_version:    int
@@ -150,9 +150,11 @@ class AlwaysBlock:
         # Per-session views so the extension can mirror `alwaysblock status`
         # (active / pending / queued), instead of showing a noisy list of every
         # expanded member domain. 'domains' is carried so the block page can tell
-        # whether the page's host is covered by a given session.
+        # whether the page's host is covered by a given session; 'id' lets the
+        # menubar cancel exactly that session.
         def _view(s, **extra):
-            return {'name': session_display_name(s), 'domains': s['domains'], **extra}
+            return {'id': s['id'], 'name': session_display_name(s),
+                    'domains': s['domains'], **extra}
 
         active_session_view = sorted(
             (_view(s, end_at=_epoch(s['end_at'])) for s in active_sessions),

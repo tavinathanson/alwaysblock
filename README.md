@@ -25,6 +25,7 @@ A macOS website blocker that's always running. The friction is always there, so 
   - [Concurrent Penalty](#concurrent-penalty)
   - [Queueing Behavior](#queueing-behavior)
   - [Quitting native apps when blocked (opt-in)](#quitting-native-apps-when-blocked-opt-in)
+  - [Menubar (optional)](#menubar-optional)
 - [Auto-Start Setup](#auto-start-setup)
 - [Troubleshooting](#troubleshooting)
 - [How It Actually Works](#how-it-actually-works)
@@ -588,6 +589,16 @@ launchctl load ~/Library/LaunchAgents/com.alwaysblock.watchdog.plist
 > **Note:** `app` is the exact process name macOS uses (what `pgrep -x` matches),
 > which is usually the name in Activity Monitor. The watchdog complements the
 > **proxy** backend; it doesn't depend on the Chrome extension.
+
+### Menubar (optional)
+
+`menubar/alwaysblock.2s.py` is a [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin. The icon is a plain lock when everything is blocked, a numbered circle (1, 2, 3) for that many open unblocks, an ellipsis circle for more than 3, and a pause circle while blocking is paused. It turns orange while an unblock is pending or queued (an hourglass if nothing is open yet). Click it to see the regular `alwaysblock status` output, plus a **Cancel** item for each open, pending, or queued session. It refreshes every 2 seconds and holds no logic of its own: it just runs the CLI and reads the shared state file.
+
+```bash
+brew install --cask swiftbar
+./install.sh       # links the plugin into SwiftBar's plugin folder (~/SwiftBar by default)
+open -a SwiftBar   # choose that folder when asked on first launch
+```
 
 ---
 
