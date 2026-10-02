@@ -450,14 +450,16 @@ class Database:
         logger.info(f"{column} '{key}' on cooldown for {remaining.total_seconds():.0f} seconds")
         return remaining
 
-    def budget_used(self, target_name: str, exempt_profiles: List[str] = ()) -> timedelta:
+    def budget_used(self, target_name: str, exempt_profiles: List[str] = (),
+                    until: Optional[datetime] = None) -> timedelta:
         """Session time charged to a target since local midnight.
 
         Each session counts from start to end, clipped to today. Pending and
         active sessions count in full because that time is already committed;
         queued ones count their duration. Cancelling an active session moves
         its end to now, which refunds the rest. Sessions from exempt profiles
-        are free.
+        are free. With `until`, only time before that moment counts, so
+        booked time that hasn't elapsed yet is left out.
         """
         midnight = local_midnight()
         marks = ','.join('?' * len(exempt_profiles))
@@ -471,9 +473,11 @@ class Database:
         used = timedelta()
         for s in map(self._row_to_dict, rows):
             if s['status'] == 'waiting_for_domain':
-                used += timedelta(minutes=s['duration_minutes'])
+                if until is None:
+                    used += timedelta(minutes=s['duration_minutes'])
             else:
-                used += s['end_at'] - max(s['start_at'], midnight)
+                end = min(s['end_at'], until) if until else s['end_at']
+                used += max(end - max(s['start_at'], midnight), timedelta())
         return used
 
     def get_all_domains_from_sessions(self) -> List[str]:

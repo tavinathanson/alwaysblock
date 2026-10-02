@@ -58,6 +58,14 @@ def test_cancelled_unstarted_session_is_free(db):
     assert db.budget_used('instagram.com') == timedelta()
 
 
+def test_until_leaves_out_booked_time(db):
+    active = db.create_session('unblock', ['instagram.com'], 0, 30, target_name='instagram.com')
+    _set_times(db, active, start_ago=5, end_ago=-25, status='active')
+    db.create_session('unblock', ['instagram.com'], 5, 30, target_name='instagram.com')
+    assert _minutes(db.budget_used('instagram.com')) == 60
+    assert _minutes(db.budget_used('instagram.com', until=datetime.now())) == 5
+
+
 def test_yesterday_does_not_count_and_midnight_clips(db):
     old = db.create_session('unblock', ['instagram.com'], 0, 30, target_name='instagram.com')
     span = db.create_session('unblock', ['instagram.com'], 0, 30, target_name='instagram.com')

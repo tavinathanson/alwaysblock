@@ -329,7 +329,9 @@ class AlwaysBlock:
             print(f"Daily budgets (reset at midnight):")
             for target in budgeted:
                 limit = self.config_manager.target_setting(target, 'daily_limit')
-                print(f"  {target}: {self._budget_left(target):g} of {limit:g} min left")
+                booked = round(self._budget_minutes(target) - self._budget_minutes(target, datetime.now()), 1)
+                note = f", {booked:g} booked by open sessions" if booked else ""
+                print(f"  {target}: {self._budget_left(target):g} of {limit:g} min left{note}")
             print(f"")
 
         if active_sessions:
@@ -1031,10 +1033,14 @@ class AlwaysBlock:
         limit = self.config_manager.target_setting(target, 'daily_limit')
         if not limit:
             return None
+        left = limit - self._budget_minutes(target)
+        return round(left, 1) if left >= 1 else 0
+
+    def _budget_minutes(self, target, until=None):
+        """Minutes charged to a target today, optionally only up to `until`."""
         exempt = [p for p in self.config_manager.get_profile_names()
                   if self.config_manager.profile_ignores_budget(p)]
-        left = limit - self.db.budget_used(target, exempt).total_seconds() / 60
-        return round(left, 1) if left >= 1 else 0
+        return self.db.budget_used(target, exempt, until).total_seconds() / 60
 
     def _get_pause_until(self):
         """Return the durable pause-until timestamp (0.0 if unset/unparseable)"""
