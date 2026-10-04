@@ -592,7 +592,7 @@ launchctl load ~/Library/LaunchAgents/com.alwaysblock.watchdog.plist
 
 ### Menubar (optional)
 
-`menubar/alwaysblock.2s.py` is a [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin. The icon is a plain lock when everything is blocked, a numbered circle (1, 2, 3) for that many open unblocks, an ellipsis circle for more than 3, and a pause circle while blocking is paused. It turns orange while an unblock is pending or queued (an hourglass if nothing is open yet). Click it to see the regular `alwaysblock status` output, plus a **Cancel** item for each open, pending, or queued session. It refreshes every 2 seconds and holds no logic of its own: it just runs the CLI and reads the shared state file.
+`menubar/alwaysblock.2s.py` is a [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin. The icon is a plain lock when everything is blocked, a numbered circle (1, 2, 3) for that many open unblocks, an ellipsis circle for more than 3, and a pause circle while blocking is paused. It turns orange while an unblock is pending or queued (an hourglass if nothing is open yet). Click it to see the regular `alwaysblock status` output, plus a **Cancel** item for each open, pending, or queued session and a **Cancel all** item when there's more than one. It refreshes every 2 seconds and holds no logic of its own: it just runs the CLI and reads the shared state file.
 
 ```bash
 brew install --cask swiftbar

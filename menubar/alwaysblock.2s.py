@@ -6,7 +6,8 @@ Icon is a lock when everything is blocked, a numbered circle for 1 to 3 open
 unblock sessions, an ellipsis circle for more, and a pause circle while paused.
 It turns orange while a session is pending or queued (an hourglass if none is
 open yet). Clicking it shows the regular `alwaysblock status` text plus a
-"Cancel" item per open, pending, or queued session. No logic of its own: it runs
+"Cancel" item per open, pending, or queued session (plus "Cancel all" when
+there are several). No logic of its own: it runs
 the CLI (which refreshes the shared state file) and reads that file, the same
 blob the proxy and bridge use.
 
@@ -54,6 +55,7 @@ actions = (
     + [action(f"Cancel {s['name']} (opens in {until(s['start_at'])})", "cancel", s["id"])
        for s in pending]
     + [action(f"Cancel {s['name']} (queued)", "cancel", s["id"]) for s in waiting]
+    + ([action("Cancel all", "block-all")] if len(active + pending + waiting) > 1 else [])
     + ([action("Resume blocking", "resume")] if paused else [])
 )
 if actions:
