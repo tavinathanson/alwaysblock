@@ -28,6 +28,13 @@ def format_time_remaining(seconds):
         return f"{int(seconds / 60)} minutes"
 
 
+def budget_bar(left, booked, limit, width=20):
+    """Fuel gauge for a daily budget: █ left, ▒ booked by open sessions, ░ used."""
+    n_left = round(width * left / limit)
+    n_booked = min(round(width * booked / limit), width - n_left)
+    return '█' * n_left + '▒' * n_booked + '░' * (width - n_left - n_booked)
+
+
 def session_display_name(session):
     """Human label for a session: the requested target, or its domains."""
     return session.get('target_name') or ', '.join(session['domains'])
@@ -326,12 +333,14 @@ class AlwaysBlock:
 
         budgeted = self.config_manager.budgeted_targets()
         if budgeted:
-            print(f"Daily budgets (reset at midnight):")
+            print(f"Daily budgets (reset at midnight; █ left ▒ booked ░ used):")
+            pad = max(map(len, budgeted))
             for target in budgeted:
                 limit = self.config_manager.target_setting(target, 'daily_limit')
+                left = self._budget_left(target)
                 booked = round(self._budget_minutes(target) - self._budget_minutes(target, datetime.now()), 1)
-                note = f", {booked:g} booked by open sessions" if booked else ""
-                print(f"  {target}: {self._budget_left(target):g} of {limit:g} min left{note}")
+                note = f", {booked:g} booked" if booked else ""
+                print(f"  {target:<{pad}}  {budget_bar(left, booked, limit)}  {left:g}/{limit:g} min left{note}")
             print(f"")
 
         if active_sessions:
